@@ -11,17 +11,18 @@ import {
   View,
 } from "react-native";
 
-import { parseProfile } from "../services/parser";
+import { getApiBaseUrl, parseProfile } from "../services/api";
 import { ProfileParseResult } from "../types/parser";
 import { formatCount, formatDate } from "../utils/format";
 
-const placeholder = "https://www.instagram.com/username/ или https://www.tiktok.com/@username";
+const profilePlaceholder = "https://www.instagram.com/username/ or https://www.tiktok.com/@username";
 
 export function ParserScreen() {
   const [url, setUrl] = useState("");
   const [result, setResult] = useState<ProfileParseResult | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const configuredApiUrl = readConfiguredApiUrl();
 
   const handleParse = async () => {
     setLoading(true);
@@ -32,7 +33,7 @@ export function ParserScreen() {
       setResult(parsed);
     } catch (caughtError) {
       setResult(null);
-      setError(caughtError instanceof Error ? caughtError.message : "Не удалось распарсить профиль.");
+      setError(caughtError instanceof Error ? caughtError.message : "Failed to parse profile.");
     } finally {
       setLoading(false);
     }
@@ -41,34 +42,33 @@ export function ParserScreen() {
   return (
     <ScrollView contentContainerStyle={styles.content}>
       <View style={styles.hero}>
-        <Text style={styles.eyebrow}>Frontend-only parser</Text>
-        <Text style={styles.title}>Instagram / TikTok Profile Parser</Text>
+        <Text style={styles.eyebrow}>Frontend + Backend</Text>
+        <Text style={styles.title}>Instagram / TikTok Parser</Text>
         <Text style={styles.subtitle}>
-          Вставь ссылку на публичный профиль, и приложение попробует достать основные данные профиля и описания последних
-          20 публикаций прямо на клиенте.
+          The mobile app now works through a backend API. Paste a public Instagram or TikTok profile link and the
+          server will try to fetch profile data plus descriptions for up to 20 recent posts.
         </Text>
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.label}>Ссылка на профиль</Text>
+        <Text style={styles.label}>Profile URL</Text>
         <TextInput
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"
           onChangeText={setUrl}
-          placeholder={placeholder}
+          placeholder={profilePlaceholder}
           placeholderTextColor="#8a7f72"
           style={styles.input}
           value={url}
         />
 
         <Pressable disabled={loading} onPress={handleParse} style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}>
-          {loading ? <ActivityIndicator color="#fffaf1" /> : <Text style={styles.buttonText}>Распарсить профиль</Text>}
+          {loading ? <ActivityIndicator color="#fffaf1" /> : <Text style={styles.buttonText}>Parse Profile</Text>}
         </Pressable>
 
         <Text style={styles.note}>
-          Ограничение: без бэкенда и официальной авторизации некоторые профили, приватные аккаунты и часть постов могут
-          быть недоступны.
+          Backend API is loaded from `frontend/.env`: {configuredApiUrl}.
         </Text>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -76,49 +76,49 @@ export function ParserScreen() {
 
       {result ? (
         <View style={styles.results}>
-        <View style={styles.profileCard}>
-          <Text style={styles.platformBadge}>{result.platform.toUpperCase()}</Text>
-          {result.avatarUrl ? <Image source={{ uri: result.avatarUrl }} style={styles.avatar} /> : null}
-          <Text style={styles.profileName}>{result.fullName || result.username}</Text>
-          <Text style={styles.profileUsername}>@{result.username}</Text>
-          <Text style={styles.profileBio}>{result.bio || "Описание профиля не найдено."}</Text>
+          <View style={styles.profileCard}>
+            <Text style={styles.platformBadge}>{result.platform.toUpperCase()}</Text>
+            {result.avatarUrl ? <Image source={{ uri: result.avatarUrl }} style={styles.avatar} /> : null}
+            <Text style={styles.profileName}>{result.fullName || result.username}</Text>
+            <Text style={styles.profileUsername}>@{result.username}</Text>
+            <Text style={styles.profileBio}>{result.bio || "No bio found."}</Text>
 
             <View style={styles.statsRow}>
-              <Stat label="Подписчики" value={formatCount(result.followersCount)} />
-              <Stat label="Подписки" value={formatCount(result.followingCount)} />
-              <Stat label="Посты" value={formatCount(result.postsCount)} />
+              <Stat label="Followers" value={formatCount(result.followersCount)} />
+              <Stat label="Following" value={formatCount(result.followingCount)} />
+              <Stat label="Posts" value={formatCount(result.postsCount)} />
             </View>
 
             <View style={styles.metaRow}>
-              <Meta label="Верификация" value={result.isVerified ? "Да" : "Нет"} />
-              <Meta label="Приватность" value={result.isPrivate ? "Приватный" : "Публичный"} />
+              <Meta label="Verified" value={result.isVerified ? "Yes" : "No"} />
+              <Meta label="Visibility" value={result.isPrivate ? "Private" : "Public"} />
               {Object.entries(result.extra ?? {}).map(([key, value]) => (
                 <Meta
                   key={key}
                   label={translateExtraKey(key)}
-                  value={typeof value === "number" ? formatCount(value) : value ? String(value) : "—"}
+                  value={typeof value === "number" ? formatCount(value) : value ? String(value) : "-"}
                 />
               ))}
             </View>
 
             <Pressable onPress={() => Linking.openURL(result.profileUrl)} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>Открыть профиль</Text>
+              <Text style={styles.secondaryButtonText}>Open Profile</Text>
             </Pressable>
           </View>
 
           <View style={styles.postsHeader}>
-            <Text style={styles.postsTitle}>Последние публикации</Text>
-            <Text style={styles.postsHint}>{result.recentPosts.length} из 20 возможных</Text>
+            <Text style={styles.postsTitle}>Recent Posts</Text>
+            <Text style={styles.postsHint}>{result.recentPosts.length} of 20</Text>
           </View>
 
           {result.recentPosts.map((post, index) => (
             <View key={post.id} style={styles.postCard}>
-              <Text style={styles.postIndex}>Публикация {index + 1}</Text>
+              <Text style={styles.postIndex}>Post {index + 1}</Text>
               <Text style={styles.postDate}>{formatDate(post.publishedAt)}</Text>
-              <Text style={styles.postCaption}>{post.caption || "Без описания"}</Text>
+              <Text style={styles.postCaption}>{post.caption || "No caption"}</Text>
               {post.url ? (
                 <Pressable onPress={() => Linking.openURL(post.url!)} style={styles.postLink}>
-                  <Text style={styles.postLinkText}>Открыть публикацию</Text>
+                  <Text style={styles.postLinkText}>Open Post</Text>
                 </Pressable>
               ) : null}
             </View>
@@ -150,11 +150,19 @@ function Meta({ label, value }: { label: string; value: string }) {
 function translateExtraKey(key: string) {
   switch (key) {
     case "likesCount":
-      return "Лайки";
+      return "Likes";
     case "externalLink":
-      return "Ссылка";
+      return "Link";
     default:
       return key;
+  }
+}
+
+function readConfiguredApiUrl() {
+  try {
+    return getApiBaseUrl();
+  } catch {
+    return "not configured";
   }
 }
 

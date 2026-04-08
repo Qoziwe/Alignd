@@ -1,25 +1,58 @@
 # Alignd
 
-React Native-приложение на Expo для best-effort парсинга публичных профилей Instagram и TikTok.
+This repository is split into two main folders:
 
-## Что умеет
+- `frontend` - Expo React Native app
+- `backend` - Python FastAPI API for parsing
 
-- принимает ссылку на профиль Instagram или TikTok;
-- определяет платформу и username;
-- пытается вытащить основные данные профиля;
-- показывает описания последних найденных публикаций, максимум 20.
+## Structure
 
-## Запуск
+```text
+.
+├─ frontend/
+├─ backend/
+└─ README.md
+```
+
+## Quick Start
+
+### 1. Start the backend
 
 ```bash
+cd backend
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+python main.py
+```
+
+### 2. Start the frontend
+
+```bash
+cd frontend
 npm install
 npm start
 ```
 
-## Важно
+### 3. Configure env files
 
-Проект сделан без отдельного бэкенда. Это значит:
+Frontend reads the API URL from `frontend/.env`:
 
-- приватные аккаунты не распарсятся;
-- Instagram и TikTok могут менять HTML и закрывать публичные данные;
-- для Instagram стабильный доступ ко всем 20 постам обычно требует серверный слой или официальный API с авторизацией.
+```env
+EXPO_PUBLIC_API_URL=http://localhost:4000
+```
+
+Backend reads host and port from `backend/.env`:
+
+```env
+HOST=0.0.0.0
+PORT=4000
+RELOAD=true
+```
+
+## Notes
+
+- The backend is now written in Python with FastAPI.
+- The backend currently parses public profile pages on the server side.
+- Private accounts still will not be available.
+- Instagram and TikTok can change their public markup at any time.
