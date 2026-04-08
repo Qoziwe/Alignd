@@ -47,7 +47,7 @@ Backend reads host and port from `backend/.env`:
 ```env
 HOST=0.0.0.0
 PORT=4000
-RELOAD=true
+RELOAD=false
 ```
 
 ## Notes

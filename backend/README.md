@@ -19,6 +19,8 @@ If you want explicit Uvicorn start, this still works too:
 uvicorn main:app --reload --host 0.0.0.0 --port 4000
 ```
 
+`RELOAD=false` is the default for `python main.py`, because on some Windows setups the auto-reloader can hang or spawn extra silent processes.
+
 ## Endpoints
 
 - `GET /api/health`
