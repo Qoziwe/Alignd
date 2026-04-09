@@ -1,230 +1,136 @@
 # Alignd
 
-This repository is split into two main folders:
+AI-powered Instagram profile analysis with account parsing, trend matching, content ideas, hooks, recommendations, authentication, and saved report history.
 
-- `frontend` - Expo React Native app
-- `backend` - Python FastAPI API for OAuth account connections
+This repository contains two separate modules:
 
-This project no longer scrapes arbitrary public profiles. It works with official OAuth connections for accounts that authorize your app.
+- `frontend` - React + Vite application
+- `backend` - Flask API with PostgreSQL-ready persistence
 
-## Structure
+## What the product does
+
+Alignd takes an Instagram profile URL, fetches profile data through Apify, sends the normalized account data to Gemini, and returns a structured report with:
+
+- profile positioning
+- audience summary
+- compatibility score
+- current trend cards
+- content ideas
+- hooks
+- strategic recommendations
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U[User] --> F[Frontend<br/>React + Vite]
+    F -->|Auth / Analysis Requests| B[Backend API<br/>Flask + Waitress]
+    B -->|Read / Write| DB[(PostgreSQL)]
+    B -->|Profile Fetch| A[Apify Instagram Scraper]
+    B -->|AI Analysis| G[Gemini 2.5 Flash-Lite]
+    G --> B
+    A --> B
+    B --> F
+    F --> U
+```
+
+## Report flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant Backend
+    participant Apify
+    participant Gemini
+    participant Postgres
+
+    User->>Frontend: Submit Instagram profile URL
+    Frontend->>Backend: POST /analyze-account
+    Backend->>Postgres: Check auth, rate limits, cache
+    Backend->>Apify: Fetch profile data
+    Apify-->>Backend: Raw account payload
+    Backend->>Gemini: Structured analysis prompt
+    Gemini-->>Backend: JSON analysis
+    Backend->>Postgres: Save analysis run
+    Backend-->>Frontend: Final report
+    Frontend-->>User: Render result screen
+```
+
+## Highlights
+
+| Area | Included |
+| --- | --- |
+| Auth | Register, login, session validation, logout |
+| Storage | PostgreSQL-ready database layer, saved analysis history |
+| Security | Rate limiting, CORS control, session tokens, security headers |
+| Analysis | Apify parsing + Gemini structured output |
+| Frontend | Auth flow, real API errors, saved report navigation |
+| Operations | Health check, readiness check, production entrypoint |
+| Testing | Backend unit/integration tests, frontend utility tests |
+
+## Monorepo layout
 
 ```text
-.
-├─ frontend/
-├─ backend/
-└─ README.md
+Alignd/
++-- backend/
+|   +-- app.py
+|   +-- serve.py
+|   +-- requirements.txt
+|   +-- tests/
+|   \-- README.md
++-- frontend/
+|   +-- src/
+|   +-- public/
+|   +-- package.json
+|   \-- README.md
+\-- README.md
 ```
 
-## Quick Start
+## Local development
 
-### 1. Start the backend
+### 1. Backend environment
 
-```bash
-cd backend
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-python main.py
-```
-
-### 2. Start the frontend
-
-```bash
-cd frontend
-npm install
-npm start
-```
-
-### 3. Configure env files
-
-Frontend reads the API URL from `frontend/.env`:
-
-```env
-EXPO_PUBLIC_API_URL=http://localhost:4000
-EXPO_PUBLIC_APP_URL=http://localhost:8081
-```
-
-Backend reads host, port, and OAuth credentials from `backend/.env`:
-
-```env
-HOST=0.0.0.0
-PORT=4000
-RELOAD=false
-FRONTEND_SUCCESS_URL=http://localhost:8081
-META_GRAPH_VERSION=v23.0
-META_APP_ID=
-META_APP_SECRET=
-META_REDIRECT_URI=http://localhost:4000/api/auth/instagram/callback
-INSTAGRAM_SCOPES=pages_show_list,instagram_basic
-TIKTOK_CLIENT_KEY=
-TIKTOK_CLIENT_SECRET=
-TIKTOK_REDIRECT_URI=
-TIKTOK_SCOPES=user.info.basic,user.info.profile,user.info.stats,video.list
-```
-
-## Full Setup Guide
-
-### 0. What you need to understand first
-
-- You need your own developer app in Meta for Developers.
-- You also need your own developer app in TikTok for Developers.
-- Other people will connect their Instagram or TikTok accounts to your app, not to your personal account.
-- Until your apps are properly configured and, if needed, reviewed/published, usually only you plus test users/app roles can connect successfully.
-
-### 1. Prepare local env files
-
-Create real env files from the examples:
-
-```bash
-copy frontend\.env.example frontend\.env
-copy backend\.env.example backend\.env
-```
+Create `backend/.env` from `backend/.env.example`.
 
 Recommended local values:
 
-`frontend/.env`
-
 ```env
-EXPO_PUBLIC_API_URL=http://localhost:4000
-EXPO_PUBLIC_APP_URL=http://localhost:8081
-```
-
-`backend/.env`
-
-```env
+APP_ENV=development
 HOST=0.0.0.0
-PORT=4000
-RELOAD=false
-FRONTEND_SUCCESS_URL=http://localhost:8081
-META_GRAPH_VERSION=v23.0
-META_APP_ID=
-META_APP_SECRET=
-META_REDIRECT_URI=http://localhost:4000/api/auth/instagram/callback
-INSTAGRAM_SCOPES=pages_show_list,instagram_basic
-TIKTOK_CLIENT_KEY=
-TIKTOK_CLIENT_SECRET=
-TIKTOK_REDIRECT_URI=
-TIKTOK_SCOPES=user.info.basic,user.info.profile,user.info.stats,video.list
+PORT=5000
+DEBUG=true
+SECRET_KEY=dev-secret-change-me
+FRONTEND_ORIGIN=http://127.0.0.1:3000,http://localhost:3000
+DATABASE_URL=sqlite:///backend/data/alignd.db
+APIFY_TOKEN=your_apify_token
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_MODEL=gemini-2.5-flash-lite
+ENABLE_SEARCH_GROUNDING=true
+SESSION_TTL_HOURS=24
+ANALYSIS_CACHE_TTL_MINUTES=360
+ANALYSIS_LIMIT_PER_HOUR=25
+AUTH_LIMIT_PER_15_MINUTES=10
 ```
 
-Important:
+### 2. Frontend environment
 
-- Leave `TIKTOK_REDIRECT_URI` empty until you prepare a real HTTPS callback URL.
-- TikTok web OAuth requires a registered redirect URI that is absolute, static, and starts with `https`.
-- For local TikTok testing, use an HTTPS tunnel such as `ngrok` or `cloudflared`.
-
-### 2. Meta / Instagram setup
-
-This backend currently uses the Instagram API with Facebook Login style flow. That means the Instagram account must be a professional account and, for this code path, must be linked to a Facebook Page.
-
-Practical steps:
-
-1. Create a developer account on Meta for Developers.
-2. Create a new app.
-3. Choose a Business-style app setup.
-   Exact labels in the Meta dashboard can change. This step is based on Meta's current app creation flow and the official Instagram API guidance.
-4. In the app dashboard, add the Facebook Login product.
-5. Open Facebook Login settings and add your callback URL to Valid OAuth Redirect URIs.
-   Use the exact value from `META_REDIRECT_URI`.
-6. Copy App ID and App Secret from the app settings into:
-   - `META_APP_ID`
-   - `META_APP_SECRET`
-7. Make sure the Instagram account you want to connect is a Professional account.
-   Business or Creator is required.
-8. Link that Instagram professional account to a Facebook Page.
-9. Make sure the Facebook user who will authorize your app has access to that Page.
-10. If only you are testing, app roles/test users may be enough.
-11. If other people should connect their accounts, expect to move the app to a public/live state and complete any needed review steps for requested permissions.
-
-What this project requests from Meta right now:
-
-- `pages_show_list`
-- `instagram_basic`
-
-Why:
-
-- `pages_show_list` is used to inspect Pages the user can access.
-- `instagram_basic` is used to read the connected Instagram professional profile/media that the backend fetches.
-
-### 3. TikTok setup
-
-TikTok in this project uses OAuth with Login Kit and TikTok API v2 endpoints.
-
-Practical steps:
-
-1. Create a developer account on TikTok for Developers.
-2. Create an app in the developer portal.
-3. Enable Login Kit for Web for that app.
-4. Register a redirect URI for the app.
-   It must exactly match `TIKTOK_REDIRECT_URI`.
-5. Use a public HTTPS callback URL.
-   Example:
-
-```text
-https://your-public-domain.example/api/auth/tiktok/callback
-```
-
-6. If you are testing locally, create an HTTPS tunnel to your backend, for example:
-
-```text
-https://abc123.ngrok-free.app/api/auth/tiktok/callback
-```
-
-7. Copy the TikTok app credentials into:
-   - `TIKTOK_CLIENT_KEY`
-   - `TIKTOK_CLIENT_SECRET`
-8. Make sure the app has the scopes used by this backend:
-   - `user.info.basic`
-   - `user.info.profile`
-   - `user.info.stats`
-   - `video.list`
-9. If TikTok requires scope approval or publishing for external users, complete that in the TikTok developer dashboard.
-
-### 4. Recommended local testing strategy
-
-Instagram is easiest to test locally first.
-
-TikTok is usually easiest to test with:
-
-- frontend on `http://localhost:8081`
-- backend on `http://localhost:4000`
-- one HTTPS tunnel that forwards to backend `:4000`
-
-Example configuration:
-
-`frontend/.env`
+Create `frontend/.env` from `frontend/.env.example`.
 
 ```env
-EXPO_PUBLIC_API_URL=http://localhost:4000
-EXPO_PUBLIC_APP_URL=http://localhost:8081
+VITE_API_URL=http://127.0.0.1:5000
 ```
 
-`backend/.env`
-
-```env
-FRONTEND_SUCCESS_URL=http://localhost:8081
-META_REDIRECT_URI=http://localhost:4000/api/auth/instagram/callback
-TIKTOK_REDIRECT_URI=https://abc123.ngrok-free.app/api/auth/tiktok/callback
-```
-
-How that works:
-
-- the frontend talks to the backend on localhost
-- TikTok redirects to the public HTTPS tunnel
-- the tunnel forwards the callback to your local backend
-- the backend then redirects the browser back to `FRONTEND_SUCCESS_URL`
-
-### 5. Run the project
+### 3. Run locally
 
 Backend:
 
 ```bash
 cd backend
 python -m venv venv
-venv\Scripts\activate
+source venv/bin/activate
 pip install -r requirements.txt
-python main.py
+python app.py
 ```
 
 Frontend:
@@ -232,91 +138,316 @@ Frontend:
 ```bash
 cd frontend
 npm install
-npm start
+npm run dev
 ```
 
-For OAuth testing, Expo Web is the easiest option because the browser redirect flow is straightforward.
+Open `http://127.0.0.1:3000`.
 
-### 6. How to test Instagram connection
+## Test and build commands
 
-1. Open the frontend in a browser.
-2. Wait until the config cards load.
-3. Make sure the Instagram card does not show missing env variables.
-4. Click `Connect` on Instagram.
-5. Log into the Facebook/Meta account that has access to the Facebook Page linked to your Instagram professional account.
-6. Approve the requested permissions.
-7. After the callback completes, the connected account should appear in the dashboard.
-8. Click `Sync` to refresh profile data and recent posts.
+Backend:
 
-If Instagram fails with "No Instagram professional account linked to a Facebook Page was found", this usually means one of these:
+```bash
+cd backend
+python -m unittest discover -s tests -v
+```
 
-- the Instagram account is still personal
-- the Instagram account is not linked to a Facebook Page
-- you logged into the wrong Facebook account
-- that Facebook account does not have access to the linked Page
+Frontend:
 
-### 7. How to test TikTok connection
+```bash
+cd frontend
+npm run lint
+npm run test
+npm run build
+```
 
-1. Open the frontend in a browser.
-2. Make sure the TikTok card does not show missing env variables.
-3. Make sure `TIKTOK_REDIRECT_URI` is a real registered HTTPS callback.
-4. Click `Connect` on TikTok.
-5. Log into TikTok and approve access.
-6. After the callback completes, the connected TikTok account should appear in the dashboard.
-7. Click `Sync` to refresh user data and recent videos.
+## Production deployment on one Ubuntu 22.04 server
 
-If TikTok fails with redirect errors, check:
+This section assumes you want both modules on one server under `/www`:
 
-- `TIKTOK_REDIRECT_URI` exactly matches the URI registered in TikTok
-- the URI is HTTPS
-- there are no extra query params in the registered URI
-- the tunnel or public domain really forwards to your backend
+- backend source: `/www/alignd/backend`
+- frontend source: `/www/alignd/frontend`
 
-### 8. Common problems
+If your host uses `/var/www` instead, replace `/www` with `/var/www`.
 
-#### The Connect button is disabled
+### Recommended topology
 
-The backend is missing env values. Open the card in the UI and check the `Missing env` message.
+```mermaid
+flowchart TD
+    Internet --> N[Nginx]
+    N -->|Static files| FE[/www/alignd/frontend/dist]
+    N -->|/api/* reverse proxy| BE[Waitress on 127.0.0.1:5000]
+    BE --> PG[(PostgreSQL)]
+    BE --> AP[Apify]
+    BE --> GM[Gemini]
+```
 
-#### OAuth opens, then returns an error
+### 1. Install base packages
 
-Most often:
+```bash
+sudo apt update
+sudo apt install -y nginx python3 python3-venv python3-pip postgresql postgresql-contrib git curl
+```
 
-- wrong `redirect_uri`
-- app credentials do not match the app where the redirect URI was registered
-- app still limited to test users / app roles
-- requested scopes are not enabled or approved
+Install Node.js 20 if it is not already available:
 
-#### Other people cannot connect their accounts
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
 
-Most often:
+### 2. Copy the project to the server
 
-- the app is still in development/testing mode
-- required permissions/scopes are not approved for external users
-- you added the permissions in code but not in the platform dashboard
+```bash
+sudo mkdir -p /www/alignd
+sudo chown -R $USER:$USER /www/alignd
+cd /www/alignd
+```
 
-#### TikTok works poorly on plain localhost
+Then upload or clone the project into that directory so you end up with:
 
-That is expected for web OAuth. TikTok's registered redirect URIs must be HTTPS and static.
+```text
+/www/alignd/backend
+/www/alignd/frontend
+```
 
-### 9. Important implementation note
+### 3. Create PostgreSQL database
 
-The current backend code in `backend/service.py` uses the Meta Facebook Login style flow:
+```bash
+sudo -u postgres psql
+```
 
-- auth URL: `https://www.facebook.com/{version}/dialog/oauth`
-- scopes: `pages_show_list,instagram_basic`
-- page lookup through `/me/accounts`
+Inside PostgreSQL:
 
-So this implementation expects:
+```sql
+CREATE USER alignd WITH PASSWORD 'replace_with_a_strong_password';
+CREATE DATABASE alignd OWNER alignd;
+GRANT ALL PRIVILEGES ON DATABASE alignd TO alignd;
+\q
+```
 
-- Instagram Professional account
-- linked Facebook Page
+### 4. Configure the backend
 
-If you want the newer Instagram Login flow without the Page requirement, the backend needs to be rewritten for the Instagram Login product and the newer Instagram business scope names.
+```bash
+cd /www/alignd/backend
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+cp .env.example .env
+```
 
-## Notes
+Edit `/www/alignd/backend/.env`:
 
-- The backend is now written in Python with FastAPI.
-- Instagram connection uses Meta OAuth and expects a professional Instagram account linked to a Facebook Page.
-- TikTok connection uses TikTok OAuth and only grants access to the TikTok account that authorizes your app.
-- The app now focuses on connected-account data instead of arbitrary public-profile scraping.
+```env
+APP_ENV=production
+HOST=127.0.0.1
+PORT=5000
+DEBUG=false
+SECRET_KEY=replace_with_a_long_random_secret
+FRONTEND_ORIGIN=https://your-domain.com
+DATABASE_URL=postgresql://alignd:replace_with_a_strong_password@localhost:5432/alignd
+APIFY_TOKEN=your_apify_token
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_MODEL=gemini-2.5-flash-lite
+ENABLE_SEARCH_GROUNDING=true
+SESSION_TTL_HOURS=24
+ANALYSIS_CACHE_TTL_MINUTES=360
+ANALYSIS_LIMIT_PER_HOUR=25
+AUTH_LIMIT_PER_15_MINUTES=10
+```
+
+Quick backend smoke test:
+
+```bash
+source /www/alignd/backend/venv/bin/activate
+cd /www/alignd/backend
+python serve.py
+```
+
+If it starts correctly, stop it with `Ctrl+C`.
+
+### 5. Configure the frontend
+
+```bash
+cd /www/alignd/frontend
+npm install
+cp .env.example .env
+```
+
+Edit `/www/alignd/frontend/.env`:
+
+```env
+VITE_API_URL=https://your-domain.com/api
+```
+
+Build the frontend:
+
+```bash
+cd /www/alignd/frontend
+npm run build
+```
+
+### 6. Create a systemd service for the backend
+
+Create `/etc/systemd/system/alignd-backend.service`:
+
+```ini
+[Unit]
+Description=Alignd backend service
+After=network.target postgresql.service
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/www/alignd/backend
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/www/alignd/backend/venv/bin/python serve.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Set permissions and enable the service:
+
+```bash
+sudo chown -R www-data:www-data /www/alignd
+sudo systemctl daemon-reload
+sudo systemctl enable alignd-backend
+sudo systemctl start alignd-backend
+sudo systemctl status alignd-backend
+```
+
+### 7. Configure Nginx
+
+Create `/etc/nginx/sites-available/alignd`:
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    root /www/alignd/frontend/dist;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:5000/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Enable the site:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/alignd /etc/nginx/sites-enabled/alignd
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+### 8. Enable HTTPS
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d your-domain.com
+```
+
+If you also use `www.your-domain.com`, include it in the command.
+
+### 9. Open the firewall
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx Full'
+sudo ufw enable
+```
+
+### 10. Verify production
+
+Check backend health:
+
+```bash
+curl http://127.0.0.1:5000/health
+curl http://127.0.0.1:5000/ready
+```
+
+Check the public site:
+
+```bash
+curl -I https://your-domain.com
+curl -I https://your-domain.com/api/health
+```
+
+Then verify manually in the browser:
+
+1. Open the frontend.
+2. Register a new user.
+3. Run one analysis.
+4. Open the saved report from the recent analyses section.
+
+## Update workflow on the server
+
+When you deploy a new version:
+
+```bash
+cd /www/alignd
+```
+
+Update backend:
+
+```bash
+cd /www/alignd/backend
+source venv/bin/activate
+pip install -r requirements.txt
+sudo systemctl restart alignd-backend
+```
+
+Update frontend:
+
+```bash
+cd /www/alignd/frontend
+npm install
+npm run build
+sudo systemctl reload nginx
+```
+
+## Troubleshooting
+
+### Frontend shows CORS errors
+
+- Check `FRONTEND_ORIGIN` in `backend/.env`
+- Check that the frontend domain exactly matches the configured origin
+- Restart the backend service after changing `.env`
+
+### `ready` fails
+
+- Check PostgreSQL is running
+- Check `DATABASE_URL`
+- Check the database user has access to the `alignd` database
+
+### Backend returns `500`
+
+- Check `journalctl -u alignd-backend -n 100 --no-pager`
+- Check `APIFY_TOKEN`, `GEMINI_API_KEY`, and `SECRET_KEY`
+- Make sure the backend virtual environment is active and dependencies are installed
+
+### Frontend loads but API requests fail
+
+- Check `VITE_API_URL` before building the frontend
+- Check Nginx `/api/` proxy configuration
+- Check that the backend service is listening on `127.0.0.1:5000`
+
+## Module docs
+
+- [Backend README](./backend/README.md)
+- [Frontend README](./frontend/README.md)
