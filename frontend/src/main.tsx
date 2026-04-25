@@ -8,3 +8,7 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 );
+
+requestAnimationFrame(() => {
+  document.getElementById('site-preloader')?.remove();
+});

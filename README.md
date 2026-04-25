@@ -1,6 +1,6 @@
 # Alignd
 
-AI-powered Instagram profile analysis with account parsing, trend matching, content ideas, hooks, recommendations, authentication, and saved report history.
+AI-powered Instagram and TikTok profile analysis with account parsing, trend matching, content ideas, hooks, recommendations, authentication, and saved report history.
 
 This repository contains two separate modules:
 
@@ -9,7 +9,7 @@ This repository contains two separate modules:
 
 ## What the product does
 
-Alignd takes an Instagram profile URL, fetches profile data through Apify, sends the normalized account data to Gemini, and returns a structured report with:
+Alignd takes an Instagram or TikTok profile URL, fetches profile data through Apify, sends the normalized account data to Gemini, and returns a structured report with:
 
 - profile positioning
 - audience summary
@@ -26,7 +26,7 @@ flowchart LR
     U[User] --> F[Frontend<br/>React + Vite]
     F -->|Auth / Analysis Requests| B[Backend API<br/>Flask + Waitress]
     B -->|Read / Write| DB[(PostgreSQL)]
-    B -->|Profile Fetch| A[Apify Instagram Scraper]
+    B -->|Profile Fetch| A[Apify Instagram / TikTok Scrapers]
     B -->|AI Analysis| G[Gemini 2.5 Flash-Lite]
     G --> B
     A --> B
@@ -45,7 +45,7 @@ sequenceDiagram
     participant Gemini
     participant Postgres
 
-    User->>Frontend: Submit Instagram profile URL
+    User->>Frontend: Submit Instagram or TikTok profile URL
     Frontend->>Backend: POST /analyze-account
     Backend->>Postgres: Check auth, rate limits, cache
     Backend->>Apify: Fetch profile data
@@ -104,6 +104,8 @@ SECRET_KEY=dev-secret-change-me
 FRONTEND_ORIGIN=http://127.0.0.1:3000,http://localhost:3000
 DATABASE_URL=sqlite:///backend/data/alignd.db
 APIFY_TOKEN=your_apify_token
+APIFY_INSTAGRAM_ACTOR_ID=apify~instagram-scraper
+APIFY_TIKTOK_ACTOR_ID=clockworks~tiktok-profile-scraper
 GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemini-2.5-flash-lite
 ENABLE_SEARCH_GROUNDING=true
@@ -248,6 +250,8 @@ SECRET_KEY=replace_with_a_long_random_secret
 FRONTEND_ORIGIN=https://your-domain.com
 DATABASE_URL=postgresql://alignd:replace_with_a_strong_password@localhost:5432/alignd
 APIFY_TOKEN=your_apify_token
+APIFY_INSTAGRAM_ACTOR_ID=apify~instagram-scraper
+APIFY_TIKTOK_ACTOR_ID=clockworks~tiktok-profile-scraper
 GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemini-2.5-flash-lite
 ENABLE_SEARCH_GROUNDING=true

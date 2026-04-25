@@ -16,6 +16,10 @@ test('extractUsername supports @username format', () => {
   assert.equal(extractUsername('@alignd.team'), 'alignd.team');
 });
 
+test('extractUsername strips TikTok @ path prefix', () => {
+  assert.equal(extractUsername('https://www.tiktok.com/@alignd.team'), 'alignd.team');
+});
+
 test('formatCompactNumber returns dash for empty values', () => {
   assert.equal(formatCompactNumber(null), '—');
 });

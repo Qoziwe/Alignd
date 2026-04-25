@@ -54,6 +54,37 @@ class BackendApiTests(unittest.TestCase):
     def auth_headers(self, token: str):
         return {"Authorization": f"Bearer {token}"}
 
+    def analysis_result(self):
+        return (
+            {
+                "profileSummary": {
+                    "niche": "Marketing",
+                    "compatibilityLabel": "High",
+                    "compatibilityScore": 91,
+                    "positioning": "Strong creator positioning.",
+                    "audienceSummary": "Audience wants practical short-form content.",
+                },
+                "trends": [
+                    {"type": "top", "title": "T1", "description": "D1", "match": 91},
+                    {"type": "top", "title": "T2", "description": "D2", "match": 88},
+                    {"type": "growing", "title": "T3", "description": "D3", "match": 84},
+                    {"type": "growing", "title": "T4", "description": "D4", "match": 80},
+                ],
+                "ideas": [
+                    {"tag": "POV", "title": "I1", "hook": "H1", "angle": "A1"},
+                    {"tag": "CASE", "title": "I2", "hook": "H2", "angle": "A2"},
+                    {"tag": "TIP", "title": "I3", "hook": "H3", "angle": "A3"},
+                ],
+                "hooks": ["1", "2", "3", "4", "5", "6"],
+                "recommendations": {
+                    "summary": "Summary",
+                    "bullets": ["b1", "b2", "b3", "b4", "b5"],
+                },
+            },
+            [{"title": "Source", "url": "https://example.com"}],
+            "gemini-2.5-flash-lite",
+        )
+
     def test_register_login_me_and_logout(self):
         register_response = self.register()
         self.assertEqual(register_response.status_code, 201)
@@ -151,6 +182,60 @@ class BackendApiTests(unittest.TestCase):
         self.assertEqual(details_response.status_code, 200)
         self.assertEqual(details_response.get_json()["id"], analysis_id)
         self.assertEqual(details_response.get_json()["account"]["username"], "example")
+
+    @patch("app.generate_analysis")
+    @patch("app.fetch_apify_items")
+    def test_analyze_tiktok_profile(self, fetch_apify_items_mock, generate_analysis_mock):
+        token = self.register().get_json()["token"]
+        fetch_apify_items_mock.return_value = [
+            {
+                "text": "A practical short-form video",
+                "diggCount": 120,
+                "commentCount": 7,
+                "playCount": 3200,
+                "createTime": 1700000000,
+                "authorMeta": {
+                    "name": "examplecreator",
+                    "nickName": "Example Creator",
+                    "signature": "Build in public",
+                    "fans": 4200,
+                    "following": 30,
+                    "video": 18,
+                    "avatar": "https://example.com/tiktok.jpg",
+                    "verified": True,
+                },
+            }
+        ]
+        generate_analysis_mock.return_value = self.analysis_result()
+
+        response = self.client.post(
+            "/analyze-account",
+            headers=self.auth_headers(token),
+            json={"profileUrl": "https://www.tiktok.com/@examplecreator", "niche": "Marketing"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["account"]["platform"], "TikTok")
+        self.assertEqual(payload["account"]["username"], "examplecreator")
+        self.assertEqual(payload["account"]["followersCount"], 4200)
+        self.assertEqual(payload["account"]["recentPosts"][0]["videoViewCount"], 3200)
+        fetch_apify_items_mock.assert_called_once_with(
+            "https://www.tiktok.com/@examplecreator",
+            "TikTok",
+            "examplecreator",
+        )
+
+    def test_tiktok_video_link_is_rejected(self):
+        token = self.register().get_json()["token"]
+
+        response = self.client.post(
+            "/analyze-account",
+            headers=self.auth_headers(token),
+            json={"profileUrl": "https://www.tiktok.com/@examplecreator/video/123"},
+        )
+
+        self.assertEqual(response.status_code, 400)
 
     @patch("app.generate_analysis", side_effect=UpstreamServiceError("AI failed.", 502))
     @patch("app.fetch_apify_items")

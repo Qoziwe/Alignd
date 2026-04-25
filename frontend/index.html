@@ -9,6 +9,60 @@
       content="Alignd помогает анализировать Instagram-профили, находить контентные тренды, идеи для видео, хуки и рекомендации для роста."
     />
     <meta name="theme-color" content="#050507" />
+    <style>
+      .site-preloader {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: #050507;
+        color: #ffffff;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      }
+
+      .site-preloader__mark {
+        font-size: 30px;
+        font-weight: 900;
+        letter-spacing: 0;
+      }
+
+      .site-preloader__line {
+        width: min(220px, 58vw);
+        height: 2px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+      }
+
+      .site-preloader__line span {
+        display: block;
+        width: 42%;
+        height: 100%;
+        border-radius: inherit;
+        background: #ececec;
+        animation: site-preloader-line 1s ease-in-out infinite;
+      }
+
+      .site-preloader__text {
+        font-size: 13px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.58);
+      }
+
+      @keyframes site-preloader-line {
+        0% {
+          transform: translateX(-110%);
+        }
+
+        100% {
+          transform: translateX(260%);
+        }
+      }
+    </style>
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Alignd" />
     <meta
@@ -23,6 +77,13 @@
     />
   </head>
   <body>
+    <div id="site-preloader" class="site-preloader">
+      <div class="site-preloader__mark">ALIGND</div>
+      <div class="site-preloader__line">
+        <span></span>
+      </div>
+      <div class="site-preloader__text">Загружаем интерфейс</div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

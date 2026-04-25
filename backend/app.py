@@ -22,8 +22,9 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
 
-APIFY_ACTOR_ID = "apify~instagram-scraper"
-APIFY_BASE_URL = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/run-sync-get-dataset-items"
+DEFAULT_APIFY_INSTAGRAM_ACTOR_ID = "apify~instagram-scraper"
+DEFAULT_APIFY_TIKTOK_ACTOR_ID = "clockworks~tiktok-profile-scraper"
+APIFY_RUN_SYNC_URL = "https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
 DEFAULT_ANALYSIS_CACHE_TTL_MINUTES = 360
@@ -32,6 +33,7 @@ DEFAULT_ANALYSIS_LIMIT_PER_HOUR = 25
 DEFAULT_AUTH_LIMIT_PER_15_MIN = 10
 CACHE_SCHEMA_VERSION = "analysis-v2"
 INSTAGRAM_HOSTS = {"instagram.com", "www.instagram.com", "m.instagram.com"}
+TIKTOK_HOSTS = {"tiktok.com", "www.tiktok.com", "m.tiktok.com"}
 RESERVED_INSTAGRAM_PATHS = {"p", "reel", "reels", "stories", "explore", "accounts"}
 TOP_TREND_MARKERS = ("top", "hot", "peak", "viral", "топ", "пик", "горяч", "вирус")
 GROWING_TREND_MARKERS = (
@@ -297,6 +299,8 @@ class AppConfig:
     secret_key: str
     frontend_origin: str
     apify_token: str | None
+    apify_instagram_actor_id: str
+    apify_tiktok_actor_id: str
     gemini_api_key: str | None
     gemini_model: str
     analysis_cache_ttl_minutes: int
@@ -332,6 +336,12 @@ class AppConfig:
             secret_key=secret_key,
             frontend_origin=str(source.get("FRONTEND_ORIGIN", "http://127.0.0.1:3000")).strip(),
             apify_token=(source.get("APIFY_TOKEN") or "").strip() or None,
+            apify_instagram_actor_id=str(
+                source.get("APIFY_INSTAGRAM_ACTOR_ID", DEFAULT_APIFY_INSTAGRAM_ACTOR_ID)
+            ).strip(),
+            apify_tiktok_actor_id=str(
+                source.get("APIFY_TIKTOK_ACTOR_ID", DEFAULT_APIFY_TIKTOK_ACTOR_ID)
+            ).strip(),
             gemini_api_key=(source.get("GEMINI_API_KEY") or "").strip() or None,
             gemini_model=str(source.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)).strip(),
             analysis_cache_ttl_minutes=parse_int(
@@ -363,6 +373,13 @@ class ApiError(Exception):
 
 class UpstreamServiceError(ApiError):
     pass
+
+
+@dataclass(slots=True)
+class ProfileTarget:
+    platform: str
+    profile_url: str
+    username: str
 
 
 class Database:
@@ -711,10 +728,10 @@ def request_json() -> dict[str, Any]:
     return payload
 
 
-def sanitize_instagram_profile_url(raw_url: str) -> str:
+def sanitize_profile_target(raw_url: str) -> ProfileTarget:
     candidate = raw_url.strip()
     if not candidate:
-        raise ApiError("Укажите ссылку на Instagram-профиль.", 400)
+        raise ApiError("Укажите ссылку на Instagram или TikTok профиль.", 400)
 
     if candidate.startswith("@"):
         username = candidate.removeprefix("@").strip()
@@ -725,9 +742,15 @@ def sanitize_instagram_profile_url(raw_url: str) -> str:
 
     parsed = urlparse(candidate)
     hostname = (parsed.hostname or "").lower()
-    if hostname not in INSTAGRAM_HOSTS:
-        raise ApiError("Сейчас поддерживаются только ссылки на Instagram-профили.", 400)
+    if hostname in INSTAGRAM_HOSTS:
+        return sanitize_instagram_profile_target(parsed)
+    if hostname in TIKTOK_HOSTS:
+        return sanitize_tiktok_profile_target(parsed)
 
+    raise ApiError("Сейчас поддерживаются только ссылки на Instagram и TikTok профили.", 400)
+
+
+def sanitize_instagram_profile_target(parsed) -> ProfileTarget:
     path_parts = [part for part in parsed.path.split("/") if part]
     if len(path_parts) != 1:
         raise ApiError("Нужна ссылка именно на профиль, а не на пост, reel или раздел Instagram.", 400)
@@ -738,12 +761,48 @@ def sanitize_instagram_profile_url(raw_url: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", username):
         raise ApiError("Некорректный username Instagram.", 400)
 
-    return f"https://www.instagram.com/{username}/"
+    return ProfileTarget("Instagram", f"https://www.instagram.com/{username}/", username)
+
+
+def sanitize_tiktok_profile_target(parsed) -> ProfileTarget:
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if len(path_parts) != 1 or not path_parts[0].startswith("@"):
+        raise ApiError("Нужна ссылка именно на профиль TikTok вида https://www.tiktok.com/@username.", 400)
+
+    username = path_parts[0].removeprefix("@")
+    if not re.fullmatch(r"[A-Za-z0-9._]{2,24}", username):
+        raise ApiError("Некорректный username TikTok.", 400)
+
+    return ProfileTarget("TikTok", f"https://www.tiktok.com/@{username}", username)
+
+
+def sanitize_instagram_profile_url(raw_url: str) -> str:
+    target = sanitize_profile_target(raw_url)
+    if target.platform != "Instagram":
+        raise ApiError("Нужна ссылка именно на профиль Instagram.", 400)
+    return target.profile_url
 
 
 def coalesce(data: dict[str, Any], keys: list[str], default: Any = None) -> Any:
     for key in keys:
         value = data.get(key)
+        if value not in (None, "", []):
+            return value
+    return default
+
+
+def get_nested(data: dict[str, Any], key_path: str) -> Any:
+    current: Any = data
+    for key in key_path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def coalesce_nested(data: dict[str, Any], keys: list[str], default: Any = None) -> Any:
+    for key in keys:
+        value = get_nested(data, key) if "." in key else data.get(key)
         if value not in (None, "", []):
             return value
     return default
@@ -758,6 +817,26 @@ def to_int(value: Any) -> int | None:
         return None
 
 
+def to_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
+def timestamp_to_iso(value: Any) -> str:
+    parsed = to_int(value)
+    if parsed is None:
+        return ""
+    try:
+        return datetime.fromtimestamp(parsed, timezone.utc).isoformat()
+    except (OSError, OverflowError, ValueError):
+        return ""
+
+
 def normalize_post(post: dict[str, Any]) -> dict[str, Any]:
     return {
         "caption": coalesce(post, ["caption", "title"], ""),
@@ -768,7 +847,7 @@ def normalize_post(post: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def normalize_account(item: dict[str, Any], profile_url: str, niche: str) -> dict[str, Any]:
+def normalize_instagram_account(item: dict[str, Any], profile_url: str, niche: str) -> dict[str, Any]:
     posts = coalesce(
         item,
         ["latestPosts", "latestIgtvVideos", "posts", "topPosts", "latestPostsVideos"],
@@ -789,8 +868,8 @@ def normalize_account(item: dict[str, Any], profile_url: str, niche: str) -> dic
             "",
         ),
         "externalUrl": coalesce(item, ["externalUrl", "website"], ""),
-        "isVerified": bool(coalesce(item, ["verified", "isVerified"], False)),
-        "isPrivate": bool(coalesce(item, ["private", "isPrivate"], False)),
+        "isVerified": to_bool(coalesce(item, ["verified", "isVerified"], False)),
+        "isPrivate": to_bool(coalesce(item, ["private", "isPrivate"], False)),
         "platform": "Instagram",
         "profileUrl": profile_url,
         "niche": niche or coalesce(item, ["categoryName", "businessCategoryName"], ""),
@@ -798,12 +877,98 @@ def normalize_account(item: dict[str, Any], profile_url: str, niche: str) -> dic
     }
 
 
-def build_apify_url() -> str:
+def normalize_tiktok_post(post: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "caption": coalesce_nested(
+            post,
+            ["text", "description", "title", "caption", "video.description", "video.title"],
+            "",
+        ),
+        "likesCount": to_int(coalesce_nested(post, ["diggCount", "likesCount", "stats.diggCount", "video.stats.diggCount"])),
+        "commentsCount": to_int(
+            coalesce_nested(post, ["commentCount", "commentsCount", "stats.commentCount", "video.stats.commentCount"])
+        ),
+        "videoViewCount": to_int(coalesce_nested(post, ["playCount", "viewsCount", "video.playCount", "video.stats.playCount"])),
+        "timestamp": coalesce_nested(post, ["createTimeISO", "timestamp", "createdAt", "video.createTimeISO"], "")
+        or timestamp_to_iso(coalesce_nested(post, ["createTime", "create_time", "video.create_time"])),
+    }
+
+
+def normalize_tiktok_account(items: list[dict[str, Any]], profile_url: str, username: str, niche: str) -> dict[str, Any]:
+    profile_item = next((item for item in items if isinstance(item.get("authorMeta"), dict)), items[0] if items else {})
+    normalized_posts = [normalize_tiktok_post(post) for post in items if isinstance(post, dict)]
+
+    resolved_username = coalesce_nested(
+        profile_item,
+        ["authorMeta.name", "authorMeta.uniqueId", "username", "author.username", "author.uniqueId"],
+        username,
+    )
+
+    external_url = coalesce_nested(profile_item, ["authorMeta.bioLink.link", "authorMeta.bioLink", "externalUrl", "website"], "")
+    if isinstance(external_url, dict):
+        external_url = coalesce(external_url, ["link", "url"], "")
+
+    return {
+        "username": str(resolved_username).removeprefix("@"),
+        "fullName": coalesce_nested(
+            profile_item,
+            ["authorMeta.nickName", "authorMeta.nickname", "nickname", "fullName", "author.nickname"],
+            "",
+        ),
+        "biography": coalesce_nested(
+            profile_item,
+            ["authorMeta.signature", "authorMeta.bio", "signature", "bio", "description"],
+            "",
+        ),
+        "followersCount": to_int(
+            coalesce_nested(profile_item, ["authorMeta.fans", "authorMeta.followers", "followersCount", "followerCount"])
+        ),
+        "followsCount": to_int(
+            coalesce_nested(profile_item, ["authorMeta.following", "authorMeta.followingCount", "followingCount", "followsCount"])
+        ),
+        "postsCount": to_int(coalesce_nested(profile_item, ["authorMeta.video", "authorMeta.videoCount", "videoCount", "postsCount"]))
+        or len(normalized_posts),
+        "profilePicUrl": coalesce_nested(
+            profile_item,
+            [
+                "authorMeta.avatar",
+                "authorMeta.avatarThumb",
+                "authorMeta.avatarMedium",
+                "authorMeta.avatarLarger",
+                "authorMeta.originalAvatarUrl",
+                "avatar",
+            ],
+            "",
+        ),
+        "externalUrl": external_url,
+        "isVerified": to_bool(coalesce_nested(profile_item, ["authorMeta.verified", "verified", "isVerified"], False)),
+        "isPrivate": to_bool(coalesce_nested(profile_item, ["authorMeta.privateAccount", "privateAccount", "isPrivate"], False)),
+        "platform": "TikTok",
+        "profileUrl": profile_url,
+        "niche": niche,
+        "recentPosts": normalized_posts[:6],
+    }
+
+
+def normalize_account(
+    raw_items: list[dict[str, Any]] | dict[str, Any],
+    profile_url: str,
+    niche: str,
+    platform: str = "Instagram",
+    username: str = "",
+) -> dict[str, Any]:
+    items = raw_items if isinstance(raw_items, list) else [raw_items]
+    if platform == "TikTok":
+        return normalize_tiktok_account(items, profile_url, username, niche)
+    return normalize_instagram_account(items[0], profile_url, niche)
+
+
+def build_apify_url(actor_id: str) -> str:
     token = current_app.config["APIFY_TOKEN"]
     if not token:
         raise ApiError("APIFY_TOKEN is not configured on the server.", 500)
     query_string = parse.urlencode({"token": token})
-    return f"{APIFY_BASE_URL}?{query_string}"
+    return f"{APIFY_RUN_SYNC_URL.format(actor_id=actor_id)}?{query_string}"
 
 
 def build_gemini_url() -> str:
@@ -815,14 +980,34 @@ def build_gemini_url() -> str:
     return f"{GEMINI_BASE_URL.format(model=model)}?{query_string}"
 
 
-def fetch_apify_items(profile_url: str) -> list[dict[str, Any]]:
-    payload = {
+def get_apify_actor_id(platform: str) -> str:
+    if platform == "TikTok":
+        return current_app.config["APIFY_TIKTOK_ACTOR_ID"]
+    return current_app.config["APIFY_INSTAGRAM_ACTOR_ID"]
+
+
+def build_apify_payload(profile_url: str, platform: str, username: str = "") -> dict[str, Any]:
+    if platform == "TikTok":
+        return {
+            "profiles": [username or profile_url.rstrip("/").rsplit("/", 1)[-1].removeprefix("@")],
+            "shouldDownloadCovers": False,
+            "shouldDownloadSlideshowImages": False,
+            "shouldDownloadSubtitles": False,
+            "shouldDownloadVideos": False,
+            "resultsPerPage": 6,
+        }
+
+    return {
         "directUrls": [profile_url],
         "resultsType": "details",
         "resultsLimit": 1,
     }
+
+
+def fetch_apify_items(profile_url: str, platform: str = "Instagram", username: str = "") -> list[dict[str, Any]]:
+    payload = build_apify_payload(profile_url, platform, username)
     apify_request = request.Request(
-        build_apify_url(),
+        build_apify_url(get_apify_actor_id(platform)),
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -850,13 +1035,14 @@ def fetch_apify_items(profile_url: str) -> list[dict[str, Any]]:
 
 
 def build_analysis_prompt(account: dict[str, Any], niche: str) -> str:
+    platform = str(account.get("platform") or "social media")
     prompt_payload = {
         "account": account,
         "userProvidedNiche": niche,
         "analysisGoal": (
-            "Проанализируй Instagram-профиль, его позиционирование и контент-сигналы. "
+            f"Проанализируй {platform}-профиль, его позиционирование и контент-сигналы. "
             "Сопоставь это с актуальными форматами коротких видео и паттернами контента, "
-            "которые работают сейчас для Instagram/Reels. "
+            f"которые работают сейчас для {platform}. "
             "Верни только валидный JSON на русском языке без markdown."
         ),
         "requirements": [
@@ -1302,7 +1488,8 @@ def register_routes(app: Flask) -> None:
         )
 
         payload = request_json()
-        profile_url = sanitize_instagram_profile_url(str(payload.get("profileUrl", "")))
+        target = sanitize_profile_target(str(payload.get("profileUrl", "")))
+        profile_url = target.profile_url
         niche = str(payload.get("niche", "")).strip()[:160]
 
         cached = get_cached_analysis(user["id"], profile_url, niche)
@@ -1318,11 +1505,11 @@ def register_routes(app: Flask) -> None:
                 }
             )
 
-        items = fetch_apify_items(profile_url)
+        items = fetch_apify_items(profile_url, target.platform, target.username)
         if not items:
             raise ApiError("Profile data was not returned. Check the link and try again.", 502)
 
-        account = normalize_account(items[0], profile_url, niche)
+        account = normalize_account(items, profile_url, niche, target.platform, target.username)
         analysis, sources, analysis_model = generate_analysis(account, niche)
         run_id = save_analysis(user["id"], profile_url, niche, account, analysis, sources)
 
@@ -1355,6 +1542,8 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
         SECRET_KEY=config.secret_key,
         FRONTEND_ORIGIN=config.frontend_origin,
         APIFY_TOKEN=config.apify_token,
+        APIFY_INSTAGRAM_ACTOR_ID=config.apify_instagram_actor_id,
+        APIFY_TIKTOK_ACTOR_ID=config.apify_tiktok_actor_id,
         GEMINI_API_KEY=config.gemini_api_key,
         GEMINI_MODEL=config.gemini_model,
         ANALYSIS_CACHE_TTL_MINUTES=config.analysis_cache_ttl_minutes,

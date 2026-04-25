@@ -85,7 +85,7 @@ type AnalysisResponse = {
     url: string;
   }>;
   createdAt: string;
-  analysisModel: string;
+  analysisModel?: string;
   cached: boolean;
 };
 
@@ -99,6 +99,20 @@ type AnalysisHistoryItem = {
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000').replace(/\/$/, '');
+const MIN_LOADING_MS = 1400;
+
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+async function holdLoading(startedAt: number) {
+  const remaining = MIN_LOADING_MS - (Date.now() - startedAt);
+  if (remaining > 0) {
+    await wait(remaining);
+  }
+}
 
 function extractErrorMessage(payload: unknown, fallback: string) {
   if (!payload || typeof payload !== 'object') {
@@ -153,6 +167,7 @@ export default function App() {
   const [url, setUrl] = useState('');
   const [niche, setNiche] = useState('');
   const [isAdviceExpanded, setIsAdviceExpanded] = useState(false);
+  const [isPreloaderVisible, setIsPreloaderVisible] = useState(false);
   const formSectionRef = useRef<HTMLDivElement | null>(null);
 
   const isResults = screen === 'results';
@@ -189,7 +204,9 @@ export default function App() {
     }
 
     setAnalysisError('');
+    setIsPreloaderVisible(true);
     setScreen('loading');
+    const loadingStartedAt = Date.now();
 
     try {
       const payload = await fetchJson<AnalysisResponse>(`${API_BASE_URL}/analyses/${analysisId}`, {
@@ -197,12 +214,16 @@ export default function App() {
           Authorization: `Bearer ${token}`,
         },
       });
+      await holdLoading(loadingStartedAt);
       setReport(payload);
       setUrl(payload.account.profileUrl || '');
       setNiche(payload.analysis.profileSummary.niche || payload.account.niche || '');
       setScreen('results');
+      setIsPreloaderVisible(false);
     } catch (error) {
+      await holdLoading(loadingStartedAt);
       setScreen('home');
+      setIsPreloaderVisible(false);
       setAnalysisError(
         error instanceof Error ? error.message : 'Не удалось открыть сохранённый анализ.',
       );
@@ -320,7 +341,9 @@ export default function App() {
 
     setAnalysisError('');
     setIsAdviceExpanded(false);
+    setIsPreloaderVisible(true);
     setScreen('loading');
+    const loadingStartedAt = Date.now();
 
     try {
       const payload = await fetchJson<AnalysisResponse>(`${API_BASE_URL}/analyze-account`, {
@@ -335,12 +358,16 @@ export default function App() {
         }),
       });
 
+      await holdLoading(loadingStartedAt);
       setReport(payload);
       setScreen('results');
+      setIsPreloaderVisible(false);
       await loadHistory(token);
     } catch (error) {
+      await holdLoading(loadingStartedAt);
       setAnalysisError(error instanceof Error ? error.message : 'Не удалось выполнить анализ.');
       setScreen('home');
+      setIsPreloaderVisible(false);
     }
   };
 
@@ -366,6 +393,38 @@ export default function App() {
           </>
         )}
       </div>
+
+      {isPreloaderVisible && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#050507]/94 px-6 backdrop-blur-md">
+          <div className="flex w-full max-w-[920px] flex-col items-center text-center">
+            <div className="relative flex h-[210px] w-[210px] items-center justify-center sm:h-[250px] sm:w-[250px]">
+              <div className="loading-orbit loading-orbit-outer"></div>
+              <div className="loading-orbit loading-orbit-inner"></div>
+              <div className="loading-sweep"></div>
+              <div className="relative z-10 flex h-[116px] w-[116px] items-center justify-center rounded-full border border-white/18 bg-[#141419] shadow-[0_24px_80px_rgba(0,0,0,0.42)]">
+                <div className="absolute inset-4 rounded-full border border-white/10"></div>
+                <Sparkles size={34} className="loading-spark text-white" strokeWidth={2.2} />
+              </div>
+            </div>
+
+            <div className="mt-2 inline-flex min-h-[42px] items-center gap-3 rounded-full border border-white/12 bg-white/6 px-5 text-[14px] font-semibold text-gray-200">
+              <span className="h-2 w-2 rounded-full bg-[#4FD5B2] shadow-[0_0_12px_rgba(79,213,178,0.9)]"></span>
+              Анализ профиля запущен
+            </div>
+
+            <h2 className="mt-7 text-[30px] font-black leading-[1.05] tracking-[-0.02em] text-white sm:text-[42px]">
+              Собираем персональный разбор
+            </h2>
+            <p className="mt-5 max-w-[620px] text-[16px] leading-[1.55] text-gray-400 sm:text-[18px]">
+              Проверяем профиль, считываем контент-сигналы и подбираем идеи, которые подходят именно под вашу нишу.
+            </p>
+
+            <div className="mt-10 w-full max-w-[640px] overflow-hidden rounded-full border border-white/10 bg-white/8 p-1">
+              <div className="loading-progress h-[8px] rounded-full bg-[#4FD5B2]"></div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <header className="relative z-10 mx-auto flex w-full max-w-[1280px] items-center justify-between px-6 pb-4 pt-6 md:px-12">
         <div className="text-[28px] font-black uppercase tracking-[-0.05em]">ALIGND</div>
@@ -410,7 +469,7 @@ export default function App() {
                 </h1>
 
                 <p className="mt-7 max-w-[760px] text-[21px] leading-[1.35] text-gray-300">
-                  Получайте персональный анализ Instagram-профиля, идеи для роликов,
+                  Получайте персональный анализ Instagram или TikTok профиля, идеи для роликов,
                   цепляющие хуки и рекомендации для роста.
                 </p>
 
@@ -534,7 +593,7 @@ export default function App() {
                       type="text"
                       value={url}
                       onChange={(event) => setUrl(event.target.value)}
-                      placeholder="https://www.instagram.com/username/"
+                      placeholder="Instagram или TikTok URL"
                       className="h-[62px] flex-1 rounded-xl border border-white/12 bg-[rgba(255,255,255,0.06)] px-6 text-[18px] text-gray-200 placeholder:text-gray-500 focus:border-white/28 focus:outline-none"
                       required
                     />
@@ -617,12 +676,46 @@ export default function App() {
         )}
 
         {screen === 'loading' && (
-          <div className="flex flex-col items-center justify-center py-32">
-            <div className="mb-8 h-16 w-16 animate-spin rounded-full border-4 border-gray-800 border-t-gray-200"></div>
-            <h2 className="mb-2 text-2xl font-semibold">Анализируем профиль...</h2>
-            <p className="max-w-[520px] text-center text-gray-400">
-              Собираем персональные рекомендации, идеи для контента и точки роста.
+          <div className="mx-auto flex min-h-[62vh] w-full max-w-[980px] flex-col items-center justify-center py-20 text-center">
+            <div className="relative flex h-[210px] w-[210px] items-center justify-center sm:h-[250px] sm:w-[250px]">
+              <div className="loading-orbit loading-orbit-outer"></div>
+              <div className="loading-orbit loading-orbit-inner"></div>
+              <div className="loading-sweep"></div>
+              <div className="relative z-10 flex h-[116px] w-[116px] items-center justify-center rounded-full border border-white/18 bg-[#141419] shadow-[0_24px_80px_rgba(0,0,0,0.42)]">
+                <div className="absolute inset-4 rounded-full border border-white/10"></div>
+                <Sparkles size={34} className="loading-spark text-white" strokeWidth={2.2} />
+              </div>
+            </div>
+
+            <div className="mt-2 inline-flex min-h-[42px] items-center gap-3 rounded-full border border-white/12 bg-white/6 px-5 text-[14px] font-semibold text-gray-200">
+              <span className="h-2 w-2 rounded-full bg-[#4FD5B2] shadow-[0_0_12px_rgba(79,213,178,0.9)]"></span>
+              Анализ профиля запущен
+            </div>
+
+            <h2 className="mt-7 text-[30px] font-black leading-[1.05] tracking-[-0.02em] text-white sm:text-[42px]">
+              Собираем персональный разбор
+            </h2>
+            <p className="mt-5 max-w-[620px] text-[16px] leading-[1.55] text-gray-400 sm:text-[18px]">
+              Проверяем профиль, считываем контент-сигналы и подбираем идеи, которые подходят именно под вашу нишу.
             </p>
+
+            <div className="mt-10 w-full max-w-[640px] overflow-hidden rounded-full border border-white/10 bg-white/8 p-1">
+              <div className="loading-progress h-[8px] rounded-full bg-[#4FD5B2]"></div>
+            </div>
+
+            <div className="mt-8 grid w-full max-w-[780px] grid-cols-1 gap-3 text-left sm:grid-cols-3">
+              {[
+                ['01', 'Профиль', 'Данные и описание'],
+                ['02', 'Контент', 'Посты и реакции'],
+                ['03', 'Идеи', 'Тренды и хуки'],
+              ].map(([step, title, description]) => (
+                <div key={step} className="rounded-[16px] border border-white/10 bg-[#15151A] px-5 py-4">
+                  <div className="text-[12px] font-black text-[#4FD5B2]">{step}</div>
+                  <div className="mt-2 text-[16px] font-bold text-white">{title}</div>
+                  <div className="mt-1 text-[13px] text-gray-500">{description}</div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -669,7 +762,6 @@ export default function App() {
 
                     <div className="mt-6 flex flex-wrap gap-3 text-sm text-gray-400">
                       <span>Обновлено: {formatAnalysisDate(report.createdAt)}</span>
-                      <span>Модель: {report.analysisModel}</span>
                     </div>
 
                     <div className="mt-8 max-w-[760px] space-y-3 text-[15px] leading-[1.45] text-[#B8B8C0]">
@@ -831,7 +923,7 @@ export default function App() {
           <div className="max-w-[420px]">
             <div className="text-[22px] font-black uppercase tracking-[-0.05em] text-white">ALIGND</div>
             <p className="mt-5 text-[16px] leading-[1.4] text-[#A2A2AA]">
-              Сервис для анализа Instagram-профилей, идей контента и персональных рекомендаций для роста.
+              Сервис для анализа Instagram и TikTok профилей, идей контента и персональных рекомендаций для роста.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-x-12 gap-y-10 text-[15px] text-[#A2A2AA] sm:grid-cols-3">

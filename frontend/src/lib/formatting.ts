@@ -13,7 +13,7 @@ export function extractUsername(inputUrl: string) {
   try {
     const parsedUrl = new URL(inputUrl);
     const parts = parsedUrl.pathname.split('/').filter(Boolean);
-    return parts[0] || 'username';
+    return (parts[0] || 'username').replace(/^@/, '');
   } catch {
     const cleaned = inputUrl.replace('@', '').trim();
     return cleaned || 'username';

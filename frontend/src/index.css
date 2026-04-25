@@ -14,3 +14,94 @@ body {
   background-color: #050505;
   color: white;
 }
+
+.loading-orbit {
+  position: absolute;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.loading-orbit::before {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: #4fd5b2;
+  box-shadow: 0 0 20px rgba(79, 213, 178, 0.95);
+}
+
+.loading-orbit-outer {
+  inset: 0;
+  animation: loading-orbit 4.8s linear infinite;
+}
+
+.loading-orbit-outer::before {
+  left: 28px;
+  top: 28px;
+}
+
+.loading-orbit-inner {
+  inset: 32px;
+  animation: loading-orbit 3.2s linear infinite reverse;
+}
+
+.loading-orbit-inner::before {
+  bottom: 18px;
+  right: 18px;
+}
+
+.loading-sweep {
+  position: absolute;
+  inset: 18px;
+  border-radius: 9999px;
+  background: conic-gradient(from 90deg, transparent 0deg, rgba(79, 213, 178, 0.28) 70deg, transparent 130deg);
+  filter: blur(0.2px);
+  animation: loading-orbit 2.4s linear infinite;
+}
+
+.loading-spark {
+  animation: loading-pulse 1.8s ease-in-out infinite;
+}
+
+.loading-progress {
+  width: 38%;
+  box-shadow: 0 0 22px rgba(79, 213, 178, 0.65);
+  animation: loading-progress 2.6s ease-in-out infinite;
+}
+
+@keyframes loading-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loading-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.94);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes loading-progress {
+  0% {
+    width: 18%;
+    transform: translateX(0);
+  }
+
+  50% {
+    width: 68%;
+    transform: translateX(28%);
+  }
+
+  100% {
+    width: 30%;
+    transform: translateX(230%);
+  }
+}

@@ -6,7 +6,7 @@ Flask API for Alignd. This service handles authentication, persistence, account 
 
 - user registration and login
 - token-based session management
-- Instagram profile analysis pipeline
+- Instagram and TikTok profile analysis pipeline
 - PostgreSQL-ready storage
 - analysis history and saved report retrieval
 - health and readiness checks
@@ -70,6 +70,8 @@ flowchart TD
 | `FRONTEND_ORIGIN` | Yes | Allowed CORS origin list, comma-separated |
 | `DATABASE_URL` | Yes | PostgreSQL in production, SQLite allowed in development |
 | `APIFY_TOKEN` | Yes | Apify API token |
+| `APIFY_INSTAGRAM_ACTOR_ID` | No | Apify actor id for Instagram profile parsing |
+| `APIFY_TIKTOK_ACTOR_ID` | No | Apify actor id for TikTok profile parsing |
 | `GEMINI_API_KEY` | Yes | Gemini API key |
 | `GEMINI_MODEL` | Yes | Gemini model name |
 | `ENABLE_SEARCH_GROUNDING` | Yes | Enable Gemini grounding tool |
@@ -89,6 +91,8 @@ SECRET_KEY=replace_with_a_long_random_secret
 FRONTEND_ORIGIN=https://your-domain.com
 DATABASE_URL=postgresql://alignd:replace_with_a_strong_password@localhost:5432/alignd
 APIFY_TOKEN=your_apify_token
+APIFY_INSTAGRAM_ACTOR_ID=apify~instagram-scraper
+APIFY_TIKTOK_ACTOR_ID=clockworks~tiktok-profile-scraper
 GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemini-2.5-flash-lite
 ENABLE_SEARCH_GROUNDING=true
