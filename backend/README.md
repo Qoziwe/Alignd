@@ -21,6 +21,8 @@ Flask API for Alignd. This service handles authentication, persistence, account 
 | `GET` | `/auth/me` | Resolve the current authenticated user |
 | `POST` | `/auth/logout` | Revoke the current session |
 | `GET` | `/analyses` | List recent saved analyses |
+| `DELETE` | `/analyses` | Clear all saved analyses for the current user |
+| `POST` | `/analyses/clear` | Clear saved analyses for clients that cannot use `DELETE` |
 | `GET` | `/analyses/<id>` | Load a saved analysis by id |
 | `POST` | `/analyze-account` | Run a new profile analysis |
 | `GET` | `/health` | Liveness check |

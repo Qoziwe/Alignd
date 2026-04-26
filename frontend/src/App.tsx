@@ -1,11 +1,16 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
   ArrowLeft,
+  BarChart3,
+  CalendarDays,
   Flame,
   Heart,
   Lightbulb,
   LogOut,
+  Mail,
+  Shield,
   Sparkles,
+  Trash2,
   TrendingUp,
   UserRound,
   Zap,
@@ -18,8 +23,9 @@ import {
   formatCompactNumber,
   getInitials,
 } from './lib/formatting';
+import aligndLogo from '../assets/AligndLogo.png';
 
-type Screen = 'home' | 'loading' | 'results';
+type Screen = 'home' | 'loading' | 'results' | 'profile';
 type AuthMode = 'login' | 'register';
 type PreloaderMode = 'analysis' | 'saved' | null;
 
@@ -100,6 +106,17 @@ type AnalysisHistoryItem = {
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000').replace(/\/$/, '');
+
+class ApiRequestError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.status = status;
+  }
+}
+
 function extractErrorMessage(payload: unknown, fallback: string) {
   if (!payload || typeof payload !== 'object') {
     return fallback;
@@ -123,11 +140,17 @@ function extractErrorMessage(payload: unknown, fallback: string) {
 }
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, options);
+  let response: Response;
+  try {
+    response = await fetch(url, options);
+  } catch (error) {
+    throw new ApiRequestError(error instanceof Error ? error.message : 'Network request failed.', 0);
+  }
+
   const payload = await response.json().catch(() => null);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, 'Request failed.'));
+    throw new ApiRequestError(extractErrorMessage(payload, 'Request failed.'), response.status);
   }
 
   return payload as T;
@@ -209,9 +232,11 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [analysisError, setAnalysisError] = useState('');
   const [historyError, setHistoryError] = useState('');
+  const [profileMessage, setProfileMessage] = useState('');
   const [authLoading, setAuthLoading] = useState(true);
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [clearAnalysesLoading, setClearAnalysesLoading] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState('');
   const [history, setHistory] = useState<AnalysisHistoryItem[]>([]);
@@ -232,6 +257,14 @@ export default function App() {
     report?.account.niche ||
     niche ||
     'Личный бренд / экспертный контент';
+  const averageCompatibility =
+    history.length > 0
+      ? Math.round(
+          history.reduce((total, item) => total + (item.compatibilityScore ?? 0), 0) /
+            history.filter((item) => item.compatibilityScore !== null).length || 0,
+        )
+      : 0;
+  const latestAnalysisDate = history[0]?.createdAt ? formatAnalysisDate(history[0].createdAt) : 'Пока нет';
 
   const loadHistory = async (authToken: string) => {
     setHistoryLoading(true);
@@ -298,10 +331,15 @@ export default function App() {
         setUser(payload.user);
         return loadHistory(storedToken);
       })
-      .catch(() => {
-        clearStoredToken();
-        setToken('');
-        setUser(null);
+      .catch((error) => {
+        if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403)) {
+          clearStoredToken();
+          setToken('');
+          setUser(null);
+          return;
+        }
+
+        setAuthError('Не удалось проверить сессию. Обновите страницу или попробуйте позже.');
       })
       .finally(() => {
         setAuthLoading(false);
@@ -385,6 +423,48 @@ export default function App() {
     setReport(null);
     setScreen('home');
     setAnalysisError('');
+  };
+
+  const handleOpenProfile = () => {
+    if (!user) {
+      return;
+    }
+
+    setProfileMessage('');
+    setAnalysisError('');
+    setIsAdviceExpanded(false);
+    setScreen('profile');
+  };
+
+  const handleClearAnalyses = async () => {
+    if (!token || clearAnalysesLoading || history.length === 0) {
+      return;
+    }
+
+    const confirmed = window.confirm('Очистить все сохранённые анализы? Это действие нельзя отменить.');
+    if (!confirmed) {
+      return;
+    }
+
+    setClearAnalysesLoading(true);
+    setHistoryError('');
+    setProfileMessage('');
+
+    try {
+      const payload = await fetchJson<{status: string; deletedCount: number}>(`${API_BASE_URL}/analyses/clear`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      setHistory([]);
+      setReport(null);
+      setProfileMessage(`Удалено анализов: ${payload.deletedCount}.`);
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : 'Не удалось очистить анализы.');
+    } finally {
+      setClearAnalysesLoading(false);
+    }
   };
 
   const handleAnalyze = async (event: React.FormEvent) => {
@@ -484,15 +564,27 @@ export default function App() {
       )}
 
       <header className="relative z-10 mx-auto flex w-full max-w-[1280px] items-center justify-between px-6 pb-4 pt-6 md:px-12">
-        <div className="text-[28px] font-black uppercase tracking-[-0.05em]">ALIGND</div>
+        <button
+          type="button"
+          onClick={() => setScreen('home')}
+          className="inline-flex items-center gap-3"
+          aria-label="Alignd home"
+        >
+          <img src={aligndLogo} alt="Alignd" className="h-[42px] w-auto object-contain" />
+          <span className="text-[28px] font-black tracking-[-0.05em] text-white">Alignd</span>
+        </button>
         {authLoading ? (
           <div className="text-sm text-gray-400">Проверяем сессию...</div>
         ) : user ? (
           <div className="flex items-center gap-3">
-            <div className="hidden rounded-full border border-white/12 bg-white/6 px-4 py-2 text-sm text-gray-200 sm:flex sm:items-center sm:gap-2">
+            <button
+              type="button"
+              onClick={handleOpenProfile}
+              className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/6 px-4 py-2 text-sm text-gray-200 transition-colors hover:bg-white/10"
+            >
               <UserRound size={16} />
-              {user.displayName}
-            </div>
+              <span className="hidden sm:inline">{user.displayName}</span>
+            </button>
             <button
               type="button"
               onClick={handleLogout}
@@ -729,6 +821,155 @@ export default function App() {
                 )}
               </section>
             )}
+          </div>
+        )}
+
+        {screen === 'profile' && user && (
+          <div className="mx-auto mt-8 w-full max-w-[1128px] pb-28">
+            <button
+              type="button"
+              onClick={() => setScreen('home')}
+              className="inline-flex h-[52px] items-center gap-3 rounded-xl border border-white/18 bg-white/6 px-6 text-[16px] font-medium text-gray-100 transition-colors hover:bg-white/10"
+            >
+              <ArrowLeft size={18} />
+              Назад
+            </button>
+
+            <section className="mt-8 rounded-[18px] border border-white/12 bg-[#15151A] px-7 py-8 shadow-[0_20px_60px_rgba(0,0,0,0.25)] md:px-10">
+              <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
+                <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
+                  <div className="flex h-[112px] w-[112px] shrink-0 items-center justify-center rounded-full bg-[#E7E7E7] text-[34px] font-black text-black">
+                    {getInitials(user.displayName)}
+                  </div>
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/6 px-4 py-2 text-[13px] font-semibold text-gray-300">
+                      <Shield size={15} />
+                      Аккаунт активен
+                    </div>
+                    <h1 className="mt-5 text-[34px] font-black tracking-[-0.045em] text-white md:text-[44px]">
+                      {user.displayName}
+                    </h1>
+                    <div className="mt-4 flex flex-wrap gap-3 text-[15px] text-gray-300">
+                      <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-4 py-2">
+                        <Mail size={15} />
+                        {user.email}
+                      </span>
+                      <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-4 py-2">
+                        <CalendarDays size={15} />
+                        С нами с {formatAnalysisDate(user.createdAt)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="inline-flex h-[50px] items-center justify-center gap-2 rounded-xl border border-white/14 bg-white/6 px-6 text-[15px] font-semibold text-gray-100 transition-colors hover:bg-white/10"
+                >
+                  <LogOut size={17} />
+                  Выйти
+                </button>
+              </div>
+            </section>
+
+            <section className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+              <article className="rounded-[16px] border border-white/10 bg-[#15151A] px-6 py-6">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="text-[14px] font-semibold text-gray-400">Всего анализов</div>
+                  <BarChart3 size={20} className="text-[#49CFAF]" />
+                </div>
+                <div className="mt-5 text-[36px] font-black tracking-[-0.04em] text-white">{history.length}</div>
+              </article>
+
+              <article className="rounded-[16px] border border-white/10 bg-[#15151A] px-6 py-6">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="text-[14px] font-semibold text-gray-400">Средняя совместимость</div>
+                  <TrendingUp size={20} className="text-[#49CFAF]" />
+                </div>
+                <div className="mt-5 text-[36px] font-black tracking-[-0.04em] text-white">
+                  {averageCompatibility ? `${averageCompatibility}%` : '—'}
+                </div>
+              </article>
+
+              <article className="rounded-[16px] border border-white/10 bg-[#15151A] px-6 py-6">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="text-[14px] font-semibold text-gray-400">Последний отчет</div>
+                  <CalendarDays size={20} className="text-[#49CFAF]" />
+                </div>
+                <div className="mt-5 text-[24px] font-black tracking-[-0.03em] text-white">{latestAnalysisDate}</div>
+              </article>
+            </section>
+
+            <section className="mt-6 rounded-[18px] border border-white/12 bg-[#15151A] px-7 py-7 shadow-[0_20px_60px_rgba(0,0,0,0.18)] md:px-10">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-[24px] font-black tracking-[-0.04em] text-white">История анализов</h2>
+                  <p className="mt-2 text-[15px] text-gray-400">Последние сохраненные отчеты вашего аккаунта.</p>
+                </div>
+                {historyLoading && <div className="text-sm text-gray-400">Обновляем...</div>}
+              </div>
+
+              {historyError && (
+                <div className="mt-5 rounded-2xl border border-[#5B2730] bg-[rgba(91,39,48,0.22)] px-5 py-4 text-[15px] text-[#FFD1D8]">
+                  {historyError}
+                </div>
+              )}
+
+              {profileMessage && (
+                <div className="mt-5 rounded-2xl border border-[#1E4D37] bg-[rgba(30,77,55,0.22)] px-5 py-4 text-[15px] text-[#BFF5DD]">
+                  {profileMessage}
+                </div>
+              )}
+
+              {!historyLoading && history.length === 0 && !historyError && (
+                <p className="mt-5 text-[15px] text-gray-400">Сохраненных анализов пока нет.</p>
+              )}
+
+              {history.length > 0 && (
+                <div className="mt-6 grid gap-3 md:grid-cols-2">
+                  {history.map((item) => (
+                    <button
+                      type="button"
+                      key={item.id}
+                      onClick={() => void openSavedAnalysis(item.id)}
+                      className="rounded-[16px] border border-white/10 bg-black/20 px-5 py-5 text-left transition-colors hover:border-white/18 hover:bg-black/30"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="text-[18px] font-bold text-white">@{item.username.toUpperCase()}</div>
+                          <div className="mt-2 text-[14px] text-gray-400">{item.niche || 'Без ниши'}</div>
+                        </div>
+                        <div className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-[13px] font-semibold text-gray-200">
+                          {item.compatibilityScore ?? '—'}%
+                        </div>
+                      </div>
+                      <div className="mt-4 text-[14px] text-gray-400">{formatAnalysisDate(item.createdAt)}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="mt-6 rounded-[18px] border border-[#5B2730] bg-[rgba(91,39,48,0.16)] px-7 py-7 md:px-10">
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h2 className="text-[22px] font-black tracking-[-0.035em] text-white">Очистить анализы</h2>
+                  <p className="mt-2 max-w-[680px] text-[15px] leading-[1.45] text-[#FFD1D8]">
+                    Удалит всю историю отчетов и локальный кэш анализов для вашего аккаунта. Профиль и вход останутся без изменений.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleClearAnalyses()}
+                  disabled={clearAnalysesLoading || history.length === 0}
+                  className="inline-flex h-[52px] items-center justify-center gap-2 rounded-xl bg-[#FF4C64] px-6 text-[15px] font-bold text-white transition-colors hover:bg-[#ff6378] disabled:cursor-not-allowed disabled:opacity-55"
+                >
+                  <Trash2 size={17} />
+                  {clearAnalysesLoading ? 'Очищаем...' : 'Очистить анализы'}
+                </button>
+              </div>
+            </section>
           </div>
         )}
 
@@ -979,7 +1220,10 @@ export default function App() {
       <footer className="relative z-10 mt-auto border-t border-white/10 bg-[#15151A]">
         <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-10 px-6 py-12 md:px-12 lg:flex-row lg:justify-between">
           <div className="max-w-[420px]">
-            <div className="text-[22px] font-black uppercase tracking-[-0.05em] text-white">ALIGND</div>
+            <div className="flex items-center gap-4">
+              <img src={aligndLogo} alt="Alignd" className="h-[52px] w-auto object-contain" />
+              <div className="text-[22px] font-black tracking-[-0.04em] text-white">Alignd</div>
+            </div>
             <p className="mt-5 text-[16px] leading-[1.4] text-[#A2A2AA]">
               Сервис для анализа Instagram и TikTok профилей, идей контента и персональных рекомендаций для роста.
             </p>

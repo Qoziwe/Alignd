@@ -183,6 +183,14 @@ class BackendApiTests(unittest.TestCase):
         self.assertEqual(details_response.get_json()["id"], analysis_id)
         self.assertEqual(details_response.get_json()["account"]["username"], "example")
 
+        clear_response = self.client.delete("/analyses", headers=self.auth_headers(token))
+        self.assertEqual(clear_response.status_code, 200)
+        self.assertEqual(clear_response.get_json()["deletedCount"], 1)
+
+        cleared_history_response = self.client.get("/analyses", headers=self.auth_headers(token))
+        self.assertEqual(cleared_history_response.status_code, 200)
+        self.assertEqual(cleared_history_response.get_json()["items"], [])
+
     @patch("app.generate_analysis")
     @patch("app.fetch_apify_items")
     def test_analyze_tiktok_profile(self, fetch_apify_items_mock, generate_analysis_mock):

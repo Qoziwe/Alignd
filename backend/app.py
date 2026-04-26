@@ -1468,6 +1468,17 @@ def get_recent_analyses(user_id: str) -> list[dict[str, Any]]:
     return items
 
 
+def delete_user_analyses(user_id: str) -> int:
+    db = get_database()
+    row = db.fetch_one(
+        "SELECT COUNT(*) AS total FROM analysis_runs WHERE user_id = ?",
+        (user_id,),
+    )
+    deleted_count = int(row["total"]) if row else 0
+    db.execute("DELETE FROM analysis_runs WHERE user_id = ?", (user_id,))
+    return deleted_count
+
+
 def get_analysis_run(user_id: str, run_id: str) -> dict[str, Any] | None:
     row = get_database().fetch_one(
         """
@@ -1519,7 +1530,7 @@ def register_routes(app: Flask) -> None:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Vary"] = "Origin"
         response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -1605,12 +1616,23 @@ def register_routes(app: Flask) -> None:
         logout_current_user()
         return jsonify({"status": "logged_out"})
 
-    @app.route("/analyses", methods=["GET", "OPTIONS"])
+    @app.route("/analyses", methods=["GET", "DELETE", "OPTIONS"])
     def analyses():
         if flask_request.method == "OPTIONS":
             return ("", 204)
         user = get_current_user()
+        if flask_request.method == "DELETE":
+            deleted_count = delete_user_analyses(user["id"])
+            return jsonify({"status": "cleared", "deletedCount": deleted_count})
         return jsonify({"items": get_recent_analyses(user["id"])})
+
+    @app.route("/analyses/clear", methods=["POST", "OPTIONS"])
+    def clear_analyses():
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+        user = get_current_user()
+        deleted_count = delete_user_analyses(user["id"])
+        return jsonify({"status": "cleared", "deletedCount": deleted_count})
 
     @app.route("/analyses/<run_id>", methods=["GET", "OPTIONS"])
     def analysis_details(run_id: str):
