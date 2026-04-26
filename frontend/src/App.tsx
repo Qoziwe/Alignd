@@ -106,6 +106,21 @@ type AnalysisHistoryItem = {
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000').replace(/\/$/, '');
+const shellContainerClass = 'mx-auto w-full max-w-[1184px] px-4 sm:px-6 lg:px-8';
+const pageClass = 'w-full pb-10 sm:pb-12';
+const cardClass =
+  'rounded-[18px] border border-white/10 bg-[#15151A] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.18)] sm:p-7 lg:p-8';
+const solidCardClass =
+  'rounded-[18px] border border-white/10 bg-[#15151A] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.18)] sm:p-7 lg:p-8';
+const sectionTitleClass =
+  'flex items-center gap-3 text-[22px] font-black uppercase leading-[1.15] tracking-[0] text-white sm:text-[26px]';
+const iconTitleClass = 'shrink-0 text-white';
+const inputClass =
+  'h-[54px] rounded-xl border border-white/12 bg-[rgba(255,255,255,0.06)] px-4 text-[16px] text-gray-200 placeholder:text-gray-500 focus:border-white/28 focus:outline-none sm:h-[58px] sm:px-5';
+const primaryButtonClass =
+  'inline-flex h-[54px] items-center justify-center rounded-xl bg-[#ECECEC] px-6 text-[16px] font-bold text-black transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-70 sm:h-[58px] sm:px-8';
+const secondaryButtonClass =
+  'inline-flex h-[48px] items-center justify-center gap-3 rounded-xl border border-white/14 bg-white/6 px-5 text-[15px] font-semibold text-gray-100 transition-colors hover:bg-white/10';
 
 class ApiRequestError extends Error {
   status: number;
@@ -182,7 +197,7 @@ function AnalysisPreloader() {
         Анализ профиля запущен
       </div>
 
-      <h2 className="mt-7 text-[30px] font-black leading-[1.05] tracking-[-0.02em] text-white sm:text-[42px]">
+      <h2 className="mt-6 text-[26px] font-black leading-[1.08] tracking-[0] text-white sm:mt-7 sm:text-[42px] sm:leading-[1.05]">
         Собираем персональный разбор
       </h2>
       <p className="mt-5 max-w-[620px] text-[16px] leading-[1.55] text-gray-400 sm:text-[18px]">
@@ -351,14 +366,10 @@ export default function App() {
   }, [report?.id, report?.account.profilePicUrl]);
 
   useEffect(() => {
-    if (screen !== 'results' || !report) {
-      return;
-    }
-
     window.requestAnimationFrame(() => {
       window.scrollTo({top: 0, left: 0, behavior: 'auto'});
     });
-  }, [screen, report]);
+  }, [screen]);
 
   const scrollToForm = () => {
     formSectionRef.current?.scrollIntoView({
@@ -513,7 +524,7 @@ export default function App() {
   };
 
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#050507] font-sans text-white selection:bg-white/20">
+    <div className="relative flex min-h-screen flex-col overflow-x-hidden bg-[#050507] font-sans text-white selection:bg-white/20">
       <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
         {isResults ? (
           <>
@@ -531,7 +542,7 @@ export default function App() {
       </div>
 
       {preloaderMode && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#050507]/94 px-6 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#050507]/94 px-4 py-8 backdrop-blur-md sm:items-center sm:px-6">
           {preloaderMode === 'analysis' ? <AnalysisPreloader /> : <SavedAnalysisPreloader />}
           <div className="hidden w-full max-w-[920px] flex-col items-center text-center">
             <div className="relative flex h-[210px] w-[210px] items-center justify-center sm:h-[250px] sm:w-[250px]">
@@ -549,7 +560,7 @@ export default function App() {
               Анализ профиля запущен
             </div>
 
-            <h2 className="mt-7 text-[30px] font-black leading-[1.05] tracking-[-0.02em] text-white sm:text-[42px]">
+            <h2 className="mt-6 text-[26px] font-black leading-[1.08] tracking-[0] text-white sm:mt-7 sm:text-[42px] sm:leading-[1.05]">
               Собираем персональный разбор
             </h2>
             <p className="mt-5 max-w-[620px] text-[16px] leading-[1.55] text-gray-400 sm:text-[18px]">
@@ -563,24 +574,24 @@ export default function App() {
         </div>
       )}
 
-      <header className="relative z-10 mx-auto flex w-full max-w-[1280px] items-center justify-between px-6 pb-4 pt-6 md:px-12">
+      <header className={`${shellContainerClass} relative z-10 flex flex-wrap items-center justify-between gap-3 pb-4 pt-6 sm:pt-8 lg:pt-10`}>
         <button
           type="button"
           onClick={() => setScreen('home')}
-          className="inline-flex items-center gap-3"
+          className="inline-flex min-w-0 items-center gap-2 sm:gap-3"
           aria-label="Alignd home"
         >
-          <img src={aligndLogo} alt="Alignd" className="h-[42px] w-auto object-contain" />
-          <span className="text-[28px] font-black tracking-[-0.05em] text-white">Alignd</span>
+          <img src={aligndLogo} alt="Alignd" className="h-[34px] w-auto object-contain sm:h-[42px]" />
+          <span className="text-[23px] font-black tracking-[0] text-white sm:text-[28px]">Alignd</span>
         </button>
         {authLoading ? (
           <div className="text-sm text-gray-400">Проверяем сессию...</div>
         ) : user ? (
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             <button
               type="button"
               onClick={handleOpenProfile}
-              className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/6 px-4 py-2 text-sm text-gray-200 transition-colors hover:bg-white/10"
+              className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/6 px-3 py-2 text-sm text-gray-200 transition-colors hover:bg-white/10 sm:px-4"
             >
               <UserRound size={16} />
               <span className="hidden sm:inline">{user.displayName}</span>
@@ -588,7 +599,7 @@ export default function App() {
             <button
               type="button"
               onClick={handleLogout}
-              className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/6 px-4 py-2 text-sm text-gray-200 transition-colors hover:bg-white/10"
+              className="hidden"
             >
               <LogOut size={16} />
               Выйти
@@ -601,23 +612,22 @@ export default function App() {
         )}
       </header>
 
-      <main className="relative z-10 mx-auto flex-1 w-full max-w-[1280px] px-6 pb-20 md:px-12">
+      <main className={`${shellContainerClass} relative z-10 flex-1 pb-0`}>
         {screen === 'home' && (
-          <div className="flex flex-col">
-            <section className="relative mb-20 mt-6 grid gap-10 lg:grid-cols-[minmax(720px,1fr)_440px] lg:items-center lg:gap-6">
-              <div className="max-w-[860px]">
-                <div className="mb-8 inline-flex items-center gap-3 rounded-full border border-white/18 bg-white/[0.03] px-6 py-2.5 text-[15px] font-medium text-gray-300 shadow-[0_12px_40px_rgba(0,0,0,0.25)] backdrop-blur-md">
-                  <Sparkles size={16} />
+          <div className={pageClass}>
+            <section className="relative mt-2 grid gap-8 sm:mt-6 lg:grid-cols-[minmax(0,700px)_minmax(300px,1fr)] lg:items-center lg:gap-12">
+              <div className="max-w-[760px]">
+                <div className="mb-6 inline-flex max-w-full items-center gap-2 rounded-2xl border border-white/18 bg-white/[0.03] px-4 py-2 text-[13px] font-medium leading-[1.35] text-gray-300 shadow-[0_12px_40px_rgba(0,0,0,0.25)] backdrop-blur-md sm:mb-8 sm:rounded-full sm:px-6 sm:py-2.5 sm:text-[15px]">
+                  <Sparkles size={16} className="shrink-0" />
                   Анализ профиля, тренды и идеи под ваш контент
                 </div>
 
-                <h1 className="max-w-[820px] text-[58px] font-bold leading-[0.95] tracking-[-0.055em] text-white sm:text-[68px] lg:text-[84px]">
-                  Создавай контент,
-                  <br />
-                  который попадает в тренд
+                <h1 className="max-w-[760px] text-[42px] font-bold leading-[1.03] tracking-[0] text-white sm:text-[56px] sm:leading-[1] lg:text-[64px] lg:leading-[0.98] xl:text-[68px]">
+                  <span className="block lg:whitespace-nowrap">Создавай контент,</span>
+                  <span className="block">который попадает в тренд</span>
                 </h1>
 
-                <p className="mt-7 max-w-[760px] text-[21px] leading-[1.35] text-gray-300">
+                <p className="mt-5 max-w-[720px] text-[17px] leading-[1.45] text-gray-300 sm:mt-6 sm:text-[19px] lg:text-[20px]">
                   Получайте персональный анализ Instagram или TikTok профиля, идеи для роликов,
                   цепляющие хуки и рекомендации для роста.
                 </p>
@@ -625,7 +635,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={scrollToForm}
-                  className="mt-10 inline-flex rounded-[18px] bg-[#ECECEC] px-11 py-[21px] text-[20px] font-bold text-black shadow-[0_18px_60px_rgba(255,255,255,0.08)] transition-colors hover:bg-white"
+                  className={`${primaryButtonClass} mt-7 w-full shadow-[0_18px_60px_rgba(255,255,255,0.08)] sm:mt-9 sm:w-auto sm:text-[17px]`}
                 >
                   Начать анализ
                 </button>
@@ -635,26 +645,26 @@ export default function App() {
                 <img
                   src={heroLiquid}
                   alt="Abstract glossy liquid shape"
-                  className="w-full max-w-[500px] object-contain drop-shadow-[0_30px_90px_rgba(0,0,0,0.65)]"
+                  className="w-full max-w-[320px] object-contain drop-shadow-[0_30px_90px_rgba(0,0,0,0.65)] sm:max-w-[400px] lg:max-w-[440px]"
                 />
               </div>
             </section>
 
             {!user && !authLoading && (
-              <section className="mb-10 rounded-[22px] border border-white/10 bg-[rgba(18,18,24,0.9)] p-7 shadow-[0_30px_80px_rgba(0,0,0,0.35)] backdrop-blur-md">
-                <div className="flex flex-wrap items-center justify-between gap-4">
+              <section className={`${cardClass} mt-10 backdrop-blur-md sm:mt-12`}>
+                <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
                   <div>
-                    <h2 className="text-[28px] font-black tracking-[-0.04em] text-white">Аккаунт</h2>
+                    <h2 className="text-[24px] font-black tracking-[0] text-white sm:text-[28px]">Аккаунт</h2>
                     <p className="mt-2 max-w-[520px] text-[15px] text-gray-400">
                       Зарегистрируйтесь или войдите, чтобы запускать анализ и сохранять историю отчётов.
                     </p>
                   </div>
 
-                  <div className="inline-flex rounded-full border border-white/10 bg-black/30 p-1">
+                  <div className="inline-flex w-full rounded-full border border-white/10 bg-black/30 p-1 sm:w-auto">
                     <button
                       type="button"
                       onClick={() => setAuthMode('register')}
-                      className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+                      className={`flex-1 rounded-full px-4 py-2 text-sm font-semibold transition-colors sm:flex-none ${
                         authMode === 'register' ? 'bg-white text-black' : 'text-gray-300'
                       }`}
                     >
@@ -663,7 +673,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => setAuthMode('login')}
-                      className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+                      className={`flex-1 rounded-full px-4 py-2 text-sm font-semibold transition-colors sm:flex-none ${
                         authMode === 'login' ? 'bg-white text-black' : 'text-gray-300'
                       }`}
                     >
@@ -672,14 +682,14 @@ export default function App() {
                   </div>
                 </div>
 
-                <form onSubmit={handleAuthSubmit} className="mt-6 grid gap-4 md:grid-cols-2">
+                <form onSubmit={handleAuthSubmit} className="mt-6 grid gap-3 sm:gap-4 md:grid-cols-2">
                   {authMode === 'register' && (
                     <input
                       type="text"
                       value={displayName}
                       onChange={(event) => setDisplayName(event.target.value)}
                       placeholder="Ваше имя"
-                      className="h-[58px] rounded-xl border border-white/12 bg-[rgba(255,255,255,0.06)] px-5 text-[16px] text-gray-200 placeholder:text-gray-500 focus:border-white/28 focus:outline-none"
+                      className={inputClass}
                       required
                     />
                   )}
@@ -688,7 +698,7 @@ export default function App() {
                     value={email}
                     onChange={(event) => setEmail(event.target.value)}
                     placeholder="Email"
-                    className="h-[58px] rounded-xl border border-white/12 bg-[rgba(255,255,255,0.06)] px-5 text-[16px] text-gray-200 placeholder:text-gray-500 focus:border-white/28 focus:outline-none"
+                    className={inputClass}
                     required
                   />
                   <input
@@ -696,13 +706,13 @@ export default function App() {
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                     placeholder="Пароль"
-                    className="h-[58px] rounded-xl border border-white/12 bg-[rgba(255,255,255,0.06)] px-5 text-[16px] text-gray-200 placeholder:text-gray-500 focus:border-white/28 focus:outline-none"
+                    className={inputClass}
                     required
                   />
                   <button
                     type="submit"
                     disabled={authSubmitting}
-                    className="h-[58px] rounded-xl bg-[#ECECEC] px-8 text-[17px] font-bold text-black transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-70"
+                    className={`${primaryButtonClass} sm:text-[17px]`}
                   >
                     {authSubmitting ? 'Подождите...' : authMode === 'register' ? 'Создать аккаунт' : 'Войти'}
                   </button>
@@ -718,38 +728,42 @@ export default function App() {
 
             <section
               ref={formSectionRef}
-              className="rounded-[22px] border border-white/10 bg-[rgba(20,20,26,0.9)] p-7 shadow-[0_30px_80px_rgba(0,0,0,0.35)] backdrop-blur-md"
+              className={`${cardClass} ${user ? 'mt-16 sm:mt-20 lg:mt-24' : 'mt-6'} backdrop-blur-md`}
             >
-              <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex flex-col items-start justify-between gap-4 sm:flex-row">
                 <div>
-                  <h2 className="text-[28px] font-black tracking-[-0.04em] text-white">Новый анализ</h2>
+                  <h2 className="text-[24px] font-black tracking-[0] text-white sm:text-[28px]">Новый анализ</h2>
                   <p className="mt-2 text-[15px] text-gray-400">
                     Вставьте ссылку на профиль и опишите нишу, чтобы получить точный разбор.
                   </p>
                 </div>
                 {user && (
-                  <div className="rounded-full border border-white/12 bg-white/6 px-4 py-2 text-sm text-gray-200">
+                  <button
+                    type="button"
+                    onClick={handleOpenProfile}
+                    className="max-w-full break-all rounded-2xl border border-white/12 bg-white/6 px-4 py-2 text-left text-sm text-gray-200 transition-colors hover:bg-white/10 focus:border-white/28 focus:outline-none sm:rounded-full"
+                  >
                     {user.email}
-                  </div>
+                  </button>
                 )}
               </div>
 
               <form onSubmit={handleAnalyze} className="mt-6 space-y-6">
                 <div>
-                  <label className="mb-4 block text-[18px] font-bold text-white">Ссылка на профиль</label>
+                  <label className="mb-3 block text-[16px] font-bold text-white sm:mb-4 sm:text-[18px]">Ссылка на профиль</label>
                   <div className="flex flex-col gap-4 md:flex-row md:items-center">
                     <input
                       type="text"
                       value={url}
                       onChange={(event) => setUrl(event.target.value)}
                       placeholder="Instagram или TikTok URL"
-                      className="h-[62px] flex-1 rounded-xl border border-white/12 bg-[rgba(255,255,255,0.06)] px-6 text-[18px] text-gray-200 placeholder:text-gray-500 focus:border-white/28 focus:outline-none"
+                      className={`${inputClass} w-full min-w-0 md:flex-1`}
                       required
                     />
                     <button
                       type="submit"
                       disabled={!user}
-                      className="h-[62px] rounded-xl bg-[#ECECEC] px-10 text-[18px] font-bold text-black transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 md:min-w-[250px]"
+                      className={`${primaryButtonClass} w-full disabled:opacity-60 md:w-auto md:min-w-[220px]`}
                     >
                       Анализировать
                     </button>
@@ -757,13 +771,13 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="mb-4 block text-[18px] font-bold text-white">Ниша</label>
+                  <label className="mb-3 block text-[16px] font-bold text-white sm:mb-4 sm:text-[18px]">Ниша</label>
                   <input
                     type="text"
                     value={niche}
                     onChange={(event) => setNiche(event.target.value)}
                     placeholder="Например: маркетинг для малого бизнеса"
-                    className="h-[62px] w-full rounded-xl border border-white/12 bg-[rgba(255,255,255,0.06)] px-6 text-[18px] text-gray-200 placeholder:text-gray-500 focus:border-white/28 focus:outline-none"
+                    className={`${inputClass} w-full`}
                   />
                 </div>
 
@@ -782,9 +796,9 @@ export default function App() {
             </section>
 
             {user && (
-              <section className="mt-10 rounded-[22px] border border-white/10 bg-[rgba(18,18,24,0.88)] p-7 shadow-[0_24px_60px_rgba(0,0,0,0.28)]">
+              <section className={`${cardClass} mt-6`}>
                 <div className="flex flex-wrap items-center justify-between gap-4">
-                  <h2 className="text-[24px] font-black tracking-[-0.04em] text-white">Последние анализы</h2>
+                  <h2 className="text-[22px] font-black tracking-[0] text-white sm:text-[24px]">Последние анализы</h2>
                   {historyLoading && <div className="text-sm text-gray-400">Обновляем историю...</div>}
                 </div>
 
@@ -807,9 +821,9 @@ export default function App() {
                         type="button"
                         key={item.id}
                         onClick={() => void openSavedAnalysis(item.id)}
-                        className="rounded-[18px] border border-white/10 bg-black/20 px-5 py-5 text-left transition-colors hover:border-white/18 hover:bg-black/30"
+                        className="rounded-[18px] border border-white/10 bg-black/20 px-4 py-4 text-left transition-colors hover:border-white/18 hover:bg-black/30 sm:px-5 sm:py-5"
                       >
-                        <div className="text-[18px] font-bold text-white">@{item.username.toUpperCase()}</div>
+                        <div className="break-all text-[17px] font-bold text-white sm:text-[18px]">@{item.username.toUpperCase()}</div>
                         <div className="mt-2 text-[14px] text-gray-400">{item.niche || 'Без ниши'}</div>
                         <div className="mt-4 flex items-center justify-between text-[14px] text-gray-300">
                           <span>{formatAnalysisDate(item.createdAt)}</span>
@@ -825,38 +839,38 @@ export default function App() {
         )}
 
         {screen === 'profile' && user && (
-          <div className="mx-auto mt-8 w-full max-w-[1128px] pb-28">
+          <div className={`${pageClass} mt-2 sm:mt-6`}>
             <button
               type="button"
               onClick={() => setScreen('home')}
-              className="inline-flex h-[52px] items-center gap-3 rounded-xl border border-white/18 bg-white/6 px-6 text-[16px] font-medium text-gray-100 transition-colors hover:bg-white/10"
+              className="inline-flex items-center justify-center gap-3 rounded-2xl border border-white/18 bg-white/[0.03] px-5 py-2 text-[15px] font-semibold text-gray-100 shadow-[0_12px_40px_rgba(0,0,0,0.25)] backdrop-blur-md transition-colors hover:bg-white/10 sm:rounded-full sm:py-2.5"
             >
               <ArrowLeft size={18} />
               Назад
             </button>
 
-            <section className="mt-8 rounded-[18px] border border-white/12 bg-[#15151A] px-7 py-8 shadow-[0_20px_60px_rgba(0,0,0,0.25)] md:px-10">
-              <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
-                <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
-                  <div className="flex h-[112px] w-[112px] shrink-0 items-center justify-center rounded-full bg-[#E7E7E7] text-[34px] font-black text-black">
+            <section className={`${solidCardClass} mt-4 sm:mt-6`}>
+              <div className="flex flex-col gap-4 sm:gap-6 lg:flex-row lg:items-start lg:justify-between">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
+                  <div className="flex h-[76px] w-[76px] shrink-0 items-center justify-center rounded-full bg-[#E7E7E7] text-[24px] font-black text-black sm:h-[112px] sm:w-[112px] sm:text-[34px]">
                     {getInitials(user.displayName)}
                   </div>
                   <div>
-                    <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/6 px-4 py-2 text-[13px] font-semibold text-gray-300">
-                      <Shield size={15} />
+                    <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-white/12 bg-white/6 px-3 py-2 text-[13px] font-semibold text-gray-300 sm:px-4">
+                      <Shield size={15} className="shrink-0" />
                       Аккаунт активен
                     </div>
-                    <h1 className="mt-5 text-[34px] font-black tracking-[-0.045em] text-white md:text-[44px]">
+                    <h1 className="mt-3 break-words text-[27px] font-black tracking-[0] text-white sm:mt-5 sm:text-[34px] md:text-[44px]">
                       {user.displayName}
                     </h1>
-                    <div className="mt-4 flex flex-wrap gap-3 text-[15px] text-gray-300">
-                      <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-4 py-2">
-                        <Mail size={15} />
-                        {user.email}
+                    <div className="mt-3 flex min-w-0 flex-wrap gap-2 text-[15px] text-gray-300 sm:mt-4 sm:gap-3">
+                      <span className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 sm:rounded-full sm:px-4">
+                        <Mail size={15} className="shrink-0" />
+                        <span className="min-w-0 break-all">{user.email}</span>
                       </span>
-                      <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-4 py-2">
-                        <CalendarDays size={15} />
-                        С нами с {formatAnalysisDate(user.createdAt)}
+                      <span className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 sm:rounded-full sm:px-4">
+                        <CalendarDays size={15} className="shrink-0" />
+                        <span className="min-w-0 break-words">С нами с {formatAnalysisDate(user.createdAt)}</span>
                       </span>
                     </div>
                   </div>
@@ -865,7 +879,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className="inline-flex h-[50px] items-center justify-center gap-2 rounded-xl border border-white/14 bg-white/6 px-6 text-[15px] font-semibold text-gray-100 transition-colors hover:bg-white/10"
+                  className="inline-flex h-[46px] w-full items-center justify-center gap-2 rounded-xl border border-white/14 bg-white/6 px-5 text-[15px] font-semibold text-gray-100 transition-colors hover:bg-white/10 sm:h-[50px] sm:w-fit sm:px-6"
                 >
                   <LogOut size={17} />
                   Выйти
@@ -873,38 +887,38 @@ export default function App() {
               </div>
             </section>
 
-            <section className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
-              <article className="rounded-[16px] border border-white/10 bg-[#15151A] px-6 py-6">
+            <section className="mt-6 grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-3">
+              <article className="rounded-[16px] border border-white/10 bg-[#15151A] p-5 sm:p-6">
                 <div className="flex items-center justify-between gap-4">
                   <div className="text-[14px] font-semibold text-gray-400">Всего анализов</div>
                   <BarChart3 size={20} className="text-[#49CFAF]" />
                 </div>
-                <div className="mt-5 text-[36px] font-black tracking-[-0.04em] text-white">{history.length}</div>
+                <div className="mt-4 text-[32px] font-black tracking-[0] text-white sm:mt-5 sm:text-[36px]">{history.length}</div>
               </article>
 
-              <article className="rounded-[16px] border border-white/10 bg-[#15151A] px-6 py-6">
+              <article className="rounded-[16px] border border-white/10 bg-[#15151A] p-5 sm:p-6">
                 <div className="flex items-center justify-between gap-4">
                   <div className="text-[14px] font-semibold text-gray-400">Средняя совместимость</div>
                   <TrendingUp size={20} className="text-[#49CFAF]" />
                 </div>
-                <div className="mt-5 text-[36px] font-black tracking-[-0.04em] text-white">
+                <div className="mt-4 text-[32px] font-black tracking-[0] text-white sm:mt-5 sm:text-[36px]">
                   {averageCompatibility ? `${averageCompatibility}%` : '—'}
                 </div>
               </article>
 
-              <article className="rounded-[16px] border border-white/10 bg-[#15151A] px-6 py-6">
+              <article className="rounded-[16px] border border-white/10 bg-[#15151A] p-5 sm:p-6">
                 <div className="flex items-center justify-between gap-4">
                   <div className="text-[14px] font-semibold text-gray-400">Последний отчет</div>
                   <CalendarDays size={20} className="text-[#49CFAF]" />
                 </div>
-                <div className="mt-5 text-[24px] font-black tracking-[-0.03em] text-white">{latestAnalysisDate}</div>
+                <div className="mt-4 text-[22px] font-black tracking-[0] text-white sm:mt-5 sm:text-[24px]">{latestAnalysisDate}</div>
               </article>
             </section>
 
-            <section className="mt-6 rounded-[18px] border border-white/12 bg-[#15151A] px-7 py-7 shadow-[0_20px_60px_rgba(0,0,0,0.18)] md:px-10">
+            <section className={`${solidCardClass} mt-6`}>
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-[24px] font-black tracking-[-0.04em] text-white">История анализов</h2>
+                  <h2 className="text-[22px] font-black tracking-[0] text-white sm:text-[24px]">История анализов</h2>
                   <p className="mt-2 text-[15px] text-gray-400">Последние сохраненные отчеты вашего аккаунта.</p>
                 </div>
                 {historyLoading && <div className="text-sm text-gray-400">Обновляем...</div>}
@@ -933,11 +947,11 @@ export default function App() {
                       type="button"
                       key={item.id}
                       onClick={() => void openSavedAnalysis(item.id)}
-                      className="rounded-[16px] border border-white/10 bg-black/20 px-5 py-5 text-left transition-colors hover:border-white/18 hover:bg-black/30"
+                      className="rounded-[16px] border border-white/10 bg-black/20 px-4 py-4 text-left transition-colors hover:border-white/18 hover:bg-black/30 sm:px-5 sm:py-5"
                     >
                       <div className="flex items-start justify-between gap-4">
                         <div>
-                          <div className="text-[18px] font-bold text-white">@{item.username.toUpperCase()}</div>
+                          <div className="break-all text-[17px] font-bold text-white sm:text-[18px]">@{item.username.toUpperCase()}</div>
                           <div className="mt-2 text-[14px] text-gray-400">{item.niche || 'Без ниши'}</div>
                         </div>
                         <div className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-[13px] font-semibold text-gray-200">
@@ -951,10 +965,10 @@ export default function App() {
               )}
             </section>
 
-            <section className="mt-6 rounded-[18px] border border-[#5B2730] bg-[rgba(91,39,48,0.16)] px-7 py-7 md:px-10">
+            <section className="mt-6 rounded-[18px] border border-[#5B2730] bg-[rgba(91,39,48,0.16)] p-5 sm:p-7 lg:p-8">
               <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <h2 className="text-[22px] font-black tracking-[-0.035em] text-white">Очистить анализы</h2>
+                  <h2 className="text-[21px] font-black tracking-[0] text-white sm:text-[22px]">Очистить анализы</h2>
                   <p className="mt-2 max-w-[680px] text-[15px] leading-[1.45] text-[#FFD1D8]">
                     Удалит всю историю отчетов и локальный кэш анализов для вашего аккаунта. Профиль и вход останутся без изменений.
                   </p>
@@ -963,7 +977,7 @@ export default function App() {
                   type="button"
                   onClick={() => void handleClearAnalyses()}
                   disabled={clearAnalysesLoading || history.length === 0}
-                  className="inline-flex h-[52px] items-center justify-center gap-2 rounded-xl bg-[#FF4C64] px-6 text-[15px] font-bold text-white transition-colors hover:bg-[#ff6378] disabled:cursor-not-allowed disabled:opacity-55"
+                  className="inline-flex h-[50px] w-full items-center justify-center gap-2 rounded-xl bg-[#FF4C64] px-5 text-[15px] font-bold text-white transition-colors hover:bg-[#ff6378] disabled:cursor-not-allowed disabled:opacity-55 sm:w-fit sm:px-6"
                 >
                   <Trash2 size={17} />
                   {clearAnalysesLoading ? 'Очищаем...' : 'Очистить анализы'}
@@ -991,7 +1005,7 @@ export default function App() {
               Анализ профиля запущен
             </div>
 
-            <h2 className="mt-7 text-[30px] font-black leading-[1.05] tracking-[-0.02em] text-white sm:text-[42px]">
+            <h2 className="mt-6 text-[26px] font-black leading-[1.08] tracking-[0] text-white sm:mt-7 sm:text-[42px] sm:leading-[1.05]">
               Собираем персональный разбор
             </h2>
             <p className="mt-5 max-w-[620px] text-[16px] leading-[1.55] text-gray-400 sm:text-[18px]">
@@ -1019,70 +1033,70 @@ export default function App() {
         )}
 
         {screen === 'results' && report && primaryIdea && (
-          <div className="mx-auto mt-[22px] w-full max-w-[1128px] pb-28">
+          <div className={`${pageClass} mt-4 sm:mt-6`}>
             <div className="flex flex-col items-start gap-4">
               <button
                 onClick={handleBack}
-                className="inline-flex h-[58px] items-center gap-3 rounded-xl border border-white/24 bg-[rgba(19,19,24,0.72)] px-7 text-[18px] font-medium text-gray-100 transition-colors hover:bg-[rgba(27,27,34,0.9)]"
+                className={secondaryButtonClass}
               >
                 <ArrowLeft size={20} />
                 Назад
               </button>
 
-              <div className="flex min-h-[58px] flex-wrap items-center gap-3 rounded-full border border-white/24 bg-[rgba(28,28,34,0.78)] px-5 text-[16px] font-medium text-gray-200 shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+              <div className="flex min-h-[48px] w-full flex-wrap items-center gap-3 rounded-2xl border border-white/24 bg-[rgba(28,28,34,0.78)] px-4 py-3 text-[14px] font-medium leading-[1.35] text-gray-200 shadow-[0_10px_30px_rgba(0,0,0,0.25)] sm:min-h-[58px] sm:w-fit sm:rounded-full sm:px-5 sm:py-0 sm:text-[16px]">
                 <span className="h-2 w-2 rounded-full bg-[#4FD5B2] shadow-[0_0_10px_rgba(79,213,178,0.9)]"></span>
                 {report.cached ? 'Результат из сохранённого анализа' : 'Персональный анализ готов'}
               </div>
             </div>
 
-            <section className="mt-[48px] rounded-[18px] border border-white/12 bg-[#15151A] px-10 py-11 shadow-[0_20px_60px_rgba(0,0,0,0.25)]">
-              <div className="flex flex-col gap-10 lg:flex-row lg:items-start lg:justify-between">
-                <div className="flex flex-col gap-8 sm:flex-row sm:items-start">
+            <section className={`${solidCardClass} mt-6`}>
+              <div className="flex flex-col gap-7 lg:flex-row lg:items-start lg:justify-between lg:gap-10">
+                <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:gap-8">
                   {report.account.profilePicUrl && !avatarLoadFailed ? (
                     <img
                       src={report.account.profilePicUrl}
                       alt={displayUsername}
-                      className="h-[146px] w-[146px] shrink-0 rounded-full object-cover"
+                      className="h-[104px] w-[104px] shrink-0 rounded-full object-cover sm:h-[132px] sm:w-[132px] lg:h-[146px] lg:w-[146px]"
                       onError={() => setAvatarLoadFailed(true)}
                     />
                   ) : (
-                    <div className="flex h-[146px] w-[146px] shrink-0 items-center justify-center rounded-full bg-[#D9D9D9] text-[44px] font-black text-black">
+                    <div className="flex h-[104px] w-[104px] shrink-0 items-center justify-center rounded-full bg-[#D9D9D9] text-[34px] font-black text-black sm:h-[132px] sm:w-[132px] sm:text-[40px] lg:h-[146px] lg:w-[146px] lg:text-[44px]">
                       {getInitials(displayUsername)}
                     </div>
                   )}
 
                   <div className="pt-1">
-                    <h2 className="text-[28px] font-black uppercase tracking-[-0.04em] text-white">
+                    <h2 className="break-all text-[24px] font-black uppercase tracking-[0] text-white sm:text-[28px]">
                       @{displayUsername.toUpperCase()}
                     </h2>
-                    <p className="mt-3 text-[18px] leading-[1.3] text-gray-300">
+                    <p className="mt-3 text-[16px] leading-[1.35] text-gray-300 [overflow-wrap:anywhere] sm:text-[18px]">
                       {displayNiche} · {report.account.platform}
                     </p>
 
-                    <div className="mt-6 flex flex-wrap gap-3 text-sm text-gray-400">
+                    <div className="mt-5 flex flex-wrap gap-3 text-sm text-gray-400 sm:mt-6">
                       <span>Обновлено: {formatAnalysisDate(report.createdAt)}</span>
                     </div>
 
-                    <div className="mt-8 max-w-[760px] space-y-3 text-[15px] leading-[1.45] text-[#B8B8C0]">
+                    <div className="mt-6 max-w-[760px] space-y-3 text-[15px] leading-[1.5] text-[#B8B8C0] sm:mt-8">
                       <p>{report.analysis.profileSummary.positioning}</p>
                       <p>{report.analysis.profileSummary.audienceSummary}</p>
                     </div>
 
-                    <div className="mt-10 grid grid-cols-1 gap-8 sm:grid-cols-3 sm:gap-12">
+                    <div className="mt-8 grid grid-cols-1 gap-5 md:grid-cols-3 md:gap-8 lg:mt-10 lg:gap-12">
                       <div>
-                        <div className="text-[28px] font-black tracking-[-0.04em] text-white">
+                        <div className="text-[24px] font-black leading-[1.15] tracking-[0] text-white [overflow-wrap:anywhere] sm:text-[26px] lg:text-[28px]">
                           {formatCompactNumber(report.account.followersCount)}
                         </div>
                         <div className="mt-4 text-[16px] text-gray-300">Подписчики</div>
                       </div>
                       <div>
-                        <div className="text-[28px] font-black tracking-[-0.04em] text-white">
+                        <div className="text-[24px] font-black leading-[1.15] tracking-[0] text-white [overflow-wrap:anywhere] sm:text-[26px] lg:text-[28px]">
                           {displayNiche}
                         </div>
                         <div className="mt-4 text-[16px] text-gray-300">Ниша</div>
                       </div>
                       <div>
-                        <div className="text-[28px] font-black tracking-[-0.04em] text-white">
+                        <div className="text-[24px] font-black leading-[1.15] tracking-[0] text-white [overflow-wrap:anywhere] sm:text-[26px] lg:text-[28px]">
                           {report.analysis.profileSummary.compatibilityLabel} {report.analysis.profileSummary.compatibilityScore}%
                         </div>
                         <div className="mt-4 text-[16px] text-gray-300">Совместимость</div>
@@ -1091,15 +1105,15 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="inline-flex h-[54px] min-w-[176px] items-center justify-center rounded-[16px] border border-white/24 bg-[rgba(39,39,46,0.7)] px-8 text-[18px] font-bold text-white">
+                <div className="inline-flex h-[48px] w-full items-center justify-center rounded-[16px] border border-white/24 bg-[rgba(39,39,46,0.7)] px-6 text-[16px] font-bold text-white sm:h-[54px] sm:w-fit sm:min-w-[176px] sm:px-8 sm:text-[18px]">
                   {report.account.platform}
                 </div>
               </div>
             </section>
 
-            <section className="mt-[64px]">
-              <h3 className="mb-8 flex items-center gap-4 text-[28px] font-black uppercase tracking-[-0.045em] text-white">
-                <Flame size={28} className="text-white" />
+            <section className="mt-10 sm:mt-12">
+              <h3 className={`${sectionTitleClass} mb-5 sm:mb-6`}>
+                <Flame size={24} className={iconTitleClass} />
                 Актуальные тренды
               </h3>
 
@@ -1107,21 +1121,21 @@ export default function App() {
                 {report.analysis.trends.map((trend, index) => (
                   <article
                     key={`${trend.title}-${index}`}
-                    className="flex min-h-[286px] flex-col rounded-[18px] border border-white/12 bg-[#15151A] px-10 py-10 shadow-[0_20px_60px_rgba(0,0,0,0.16)]"
+                    className="flex flex-col rounded-[18px] border border-white/10 bg-[#15151A] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.16)] sm:min-h-[240px] sm:p-7 lg:p-8"
                   >
                     <div
-                      className={`inline-flex h-[38px] w-fit items-center gap-2 rounded-[14px] px-4 text-[13px] font-black uppercase tracking-[-0.01em] ${
+                      className={`inline-flex h-[36px] w-fit items-center gap-2 rounded-[14px] px-4 text-[12px] font-black uppercase tracking-[0] sm:h-[38px] sm:text-[13px] ${
                         trend.type === 'top' ? 'bg-[#5B2730] text-[#FF4C64]' : 'bg-[#1E4D37] text-[#4CC287]'
                       }`}
                     >
                       {trend.type === 'top' ? <Flame size={16} strokeWidth={2.4} /> : <TrendingUp size={16} strokeWidth={2.4} />}
                       {trend.type === 'top' ? 'Топ' : 'Растёт'}
                     </div>
-                    <div className="mt-[34px]">
+                    <div className="mt-6 sm:mt-8">
                       <h4 className="text-[20px] font-bold leading-[1.2] text-white">{trend.title}</h4>
-                      <p className="mt-4 max-w-[400px] text-[17px] leading-[1.3] text-gray-200">{trend.description}</p>
+                      <p className="mt-3 max-w-[400px] text-[15px] leading-[1.4] text-gray-200 sm:mt-4 sm:text-[17px] sm:leading-[1.3]">{trend.description}</p>
                     </div>
-                    <div className="mt-auto pt-9">
+                    <div className="mt-auto pt-7 sm:pt-9">
                       <div className="mb-3 text-[14px] font-medium text-[#49CFAF]">{trend.match}% совпадение</div>
                       <div className="h-[3px] w-full rounded-full bg-white/18">
                         <div className="h-[3px] rounded-full bg-[#49CFAF]" style={{width: `${trend.match}%`}}></div>
@@ -1132,20 +1146,20 @@ export default function App() {
               </div>
             </section>
 
-            <section className="mt-[66px]">
-              <h3 className="mb-8 flex items-center gap-4 text-[28px] font-black uppercase tracking-[-0.045em] text-white">
-                <Lightbulb size={28} className="text-white" />
+            <section className="mt-10 sm:mt-12">
+              <h3 className={`${sectionTitleClass} mb-5 sm:mb-6`}>
+                <Lightbulb size={24} className={iconTitleClass} />
                 Идеи видео
               </h3>
 
-              <article className="relative overflow-hidden rounded-[18px] border border-white/12 bg-[#15151A] px-10 py-10 shadow-[0_20px_60px_rgba(0,0,0,0.16)]">
+              <article className={`${solidCardClass} relative overflow-hidden`}>
                 <div className="absolute inset-y-4 left-0 w-[3px] rounded-full bg-[#FF4967]"></div>
-                <div className="inline-flex h-[30px] w-fit items-center rounded-[999px] bg-[#5B2730] px-6 text-[13px] font-black uppercase tracking-[-0.01em] text-[#FF4C64]">
+                <div className="inline-flex min-h-[30px] w-fit items-center rounded-[999px] bg-[#5B2730] px-4 py-1 text-[12px] font-black uppercase tracking-[0] text-[#FF4C64] sm:px-6 sm:text-[13px]">
                   {primaryIdea.tag}
                 </div>
                 <h4 className="mt-5 text-[20px] font-bold leading-[1.25] text-white">{primaryIdea.title}</h4>
                 <div className="mt-8 text-[15px] font-semibold text-[#6B6B76]">Хук (первые 3 секунды)</div>
-                <div className="mt-5 rounded-[16px] bg-black px-6 py-5 text-[16px] leading-[1.35] text-gray-300 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.02)]">
+                <div className="mt-4 rounded-[14px] bg-black px-4 py-4 text-[15px] leading-[1.4] text-gray-300 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.02)] sm:mt-5 sm:rounded-[16px] sm:px-6 sm:py-5 sm:text-[16px]">
                   {primaryIdea.hook}
                 </div>
                 <div className="mt-6 text-[15px] leading-[1.4] text-[#B8B8C0]">{primaryIdea.angle}</div>
@@ -1154,8 +1168,8 @@ export default function App() {
               {secondaryIdeas.length > 0 && (
                 <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
                   {secondaryIdeas.map((idea, index) => (
-                    <article key={`${idea.title}-${index}`} className="rounded-[18px] border border-white/12 bg-[#15151A] px-8 py-7 shadow-[0_20px_60px_rgba(0,0,0,0.16)]">
-                      <div className="inline-flex rounded-full bg-white/8 px-4 py-2 text-[12px] font-bold uppercase tracking-[-0.01em] text-white">
+                    <article key={`${idea.title}-${index}`} className="rounded-[18px] border border-white/10 bg-[#15151A] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.16)] sm:p-6">
+                      <div className="inline-flex rounded-full bg-white/8 px-4 py-2 text-[12px] font-bold uppercase tracking-[0] text-white">
                         {idea.tag}
                       </div>
                       <h4 className="mt-4 text-[18px] font-bold text-white">{idea.title}</h4>
@@ -1166,29 +1180,29 @@ export default function App() {
               )}
             </section>
 
-            <section className="mt-[68px]">
-              <h3 className="mb-8 flex items-center gap-4 text-[28px] font-black uppercase tracking-[-0.045em] text-white">
-                <Zap size={26} className="text-white" />
+            <section className="mt-10 sm:mt-12">
+              <h3 className={`${sectionTitleClass} mb-5 sm:mb-6`}>
+                <Zap size={23} className={iconTitleClass} />
                 Хуки для захвата внимания
               </h3>
 
               <div className="grid grid-cols-1 gap-[10px] md:grid-cols-2">
                 {report.analysis.hooks.map((hook, index) => (
-                  <article key={`${hook}-${index}`} className="min-h-[92px] rounded-[12px] border border-white/12 bg-[#15151A] px-7 py-4 shadow-[0_16px_36px_rgba(0,0,0,0.14)]">
+                  <article key={`${hook}-${index}`} className="min-h-[84px] rounded-[12px] border border-white/10 bg-[#15151A] p-5 shadow-[0_16px_36px_rgba(0,0,0,0.14)] sm:min-h-[92px] sm:px-6">
                     <div className="text-[13px] font-medium text-[#6D6D78]">{String(index + 1).padStart(2, '0')}</div>
-                    <div className="mt-3 max-w-[460px] text-[15px] font-medium leading-[1.25] text-white">{hook}</div>
+                    <div className="mt-3 max-w-[460px] text-[15px] font-medium leading-[1.35] text-white sm:leading-[1.25]">{hook}</div>
                   </article>
                 ))}
               </div>
             </section>
 
-            <section className="mt-[64px]">
-              <h3 className="mb-8 flex items-center gap-4 text-[28px] font-black uppercase tracking-[-0.045em] text-white">
-                <Heart size={26} className="text-white" />
+            <section className="mt-10 sm:mt-12">
+              <h3 className={`${sectionTitleClass} mb-5 sm:mb-6`}>
+                <Heart size={23} className={iconTitleClass} />
                 Общие рекомендации
               </h3>
 
-              <article className="rounded-[18px] border border-white/12 bg-[#15151A] px-7 py-7 shadow-[0_20px_60px_rgba(0,0,0,0.16)] md:px-10 md:py-9">
+              <article className={solidCardClass}>
                 <div className={`overflow-hidden text-[15px] leading-[1.5] text-[#B8B8C0] ${isAdviceExpanded ? 'max-h-none' : 'max-h-[220px]'}`}>
                   <p>{report.analysis.recommendations.summary}</p>
                   {report.analysis.recommendations.bullets.map((line, index) => (
@@ -1207,7 +1221,7 @@ export default function App() {
                 </button>
 
                 {report.sources.length > 0 && (
-                  <div className="mt-6 border-t border-white/10 pt-5 text-[13px] leading-[1.45] text-[#8E8E97]">
+                  <div className="mt-6 border-t border-white/10 pt-5 text-[13px] leading-[1.45] text-[#8E8E97] [overflow-wrap:anywhere]">
                     Источники: {report.sources.map((source) => source.title).join(' · ')}
                   </div>
                 )}
@@ -1218,17 +1232,17 @@ export default function App() {
       </main>
 
       <footer className="relative z-10 mt-auto border-t border-white/10 bg-[#15151A]">
-        <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-10 px-6 py-12 md:px-12 lg:flex-row lg:justify-between">
+        <div className="mx-auto flex w-full max-w-[1184px] flex-col gap-8 px-6 py-10 sm:px-8 sm:py-12 lg:flex-row lg:justify-between lg:px-10">
           <div className="max-w-[420px]">
-            <div className="flex items-center gap-4">
-              <img src={aligndLogo} alt="Alignd" className="h-[52px] w-auto object-contain" />
-              <div className="text-[22px] font-black tracking-[-0.04em] text-white">Alignd</div>
+            <div className="flex items-center gap-3 sm:gap-4">
+              <img src={aligndLogo} alt="Alignd" className="h-[44px] w-auto object-contain sm:h-[52px]" />
+              <div className="text-[22px] font-black tracking-[0] text-white">Alignd</div>
             </div>
             <p className="mt-5 text-[16px] leading-[1.4] text-[#A2A2AA]">
               Сервис для анализа Instagram и TikTok профилей, идей контента и персональных рекомендаций для роста.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-x-12 gap-y-10 text-[15px] text-[#A2A2AA] sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-8 text-[15px] text-[#A2A2AA] sm:grid-cols-3 sm:gap-x-12 sm:gap-y-10">
             <div>
               <div className="mb-4 font-semibold text-[#D0D0D6]">Продукт</div>
               <div className="space-y-2">

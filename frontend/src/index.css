@@ -7,15 +7,21 @@
 
 html {
   background: #050507;
+  overflow-x: hidden;
 }
 
 body {
   margin: 0;
   background-color: #050505;
   color: white;
+  overflow-x: hidden;
 }
 
-.loading-atom {
+* {
+  box-sizing: border-box;
+}
+
+.loading-atom { 
   position: relative;
   display: flex;
   width: 220px;
@@ -219,6 +225,48 @@ body {
   border-radius: inherit;
   background: #ececec;
   animation: simple-loader-line 0.95s linear infinite;
+}
+
+@media (max-width: 640px) {
+  .loading-atom {
+    width: 178px;
+    height: 178px;
+  }
+
+  .loading-atom::before {
+    inset: 14px;
+  }
+
+  .loading-atom::after {
+    inset: 22px;
+  }
+
+  .loading-atom-ring {
+    width: 154px;
+    height: 60px;
+    margin-left: -77px;
+    margin-top: -30px;
+  }
+
+  .loading-atom-ring::before,
+  .loading-atom-ring::after {
+    width: 13px;
+    height: 13px;
+    margin-top: -6.5px;
+  }
+
+  .loading-atom-ring::before {
+    left: -6.5px;
+  }
+
+  .loading-atom-ring::after {
+    right: -6.5px;
+  }
+
+  .loading-atom-core {
+    width: 96px;
+    height: 96px;
+  }
 }
 
 @keyframes loading-atom-turn {
