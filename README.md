@@ -9,7 +9,7 @@ This repository contains two separate modules:
 
 ## What the product does
 
-Alignd takes an Instagram or TikTok profile URL, fetches profile data through Apify, sends the normalized account data to Gemini, and returns a structured report with:
+Alignd takes an Instagram or TikTok profile URL, fetches profile data through Apify, researches fresh trends with Gemini and Google Search grounding, sends the normalized account data plus the trend research to Gemini, and returns a structured report with:
 
 - profile positioning
 - audience summary
@@ -27,7 +27,8 @@ flowchart LR
     F -->|Auth / Analysis Requests| B[Backend API<br/>Flask + Waitress]
     B -->|Read / Write| DB[(PostgreSQL)]
     B -->|Profile Fetch| A[Apify Instagram / TikTok Scrapers]
-    B -->|AI Analysis| G[Gemini 2.5 Flash-Lite]
+    B -->|Fresh Trend Research| GT[Gemini + Google Search]
+    B -->|AI Analysis| G[Gemini 2.5 Flash]
     G --> B
     A --> B
     B --> F
@@ -50,7 +51,9 @@ sequenceDiagram
     Backend->>Postgres: Check auth, rate limits, cache
     Backend->>Apify: Fetch profile data
     Apify-->>Backend: Raw account payload
-    Backend->>Gemini: Structured analysis prompt
+    Backend->>Gemini: Fresh trend research prompt with Google Search
+    Gemini-->>Backend: Current trend research + sources
+    Backend->>Gemini: Structured profile matching prompt
     Gemini-->>Backend: JSON analysis
     Backend->>Postgres: Save analysis run
     Backend-->>Frontend: Final report
@@ -64,7 +67,7 @@ sequenceDiagram
 | Auth | Register, login, session validation, logout |
 | Storage | PostgreSQL-ready database layer, saved analysis history |
 | Security | Rate limiting, CORS control, session tokens, security headers |
-| Analysis | Apify parsing + Gemini structured output |
+| Analysis | Apify parsing + fresh trend research + Gemini structured output |
 | Frontend | Auth flow, real API errors, saved report navigation |
 | Operations | Health check, readiness check, production entrypoint |
 | Testing | Backend unit/integration tests, frontend utility tests |
@@ -107,10 +110,11 @@ APIFY_TOKEN=your_apify_token
 APIFY_INSTAGRAM_ACTOR_ID=apify~instagram-scraper
 APIFY_TIKTOK_ACTOR_ID=clockworks~tiktok-profile-scraper
 GEMINI_API_KEY=your_gemini_api_key
-GEMINI_MODEL=gemini-2.5-flash-lite
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_TREND_MODEL=gemini-2.5-flash
 ENABLE_SEARCH_GROUNDING=true
 SESSION_TTL_HOURS=24
-ANALYSIS_CACHE_TTL_MINUTES=360
+ANALYSIS_CACHE_TTL_MINUTES=60
 ANALYSIS_LIMIT_PER_HOUR=25
 AUTH_LIMIT_PER_15_MINUTES=10
 ```
@@ -253,10 +257,11 @@ APIFY_TOKEN=your_apify_token
 APIFY_INSTAGRAM_ACTOR_ID=apify~instagram-scraper
 APIFY_TIKTOK_ACTOR_ID=clockworks~tiktok-profile-scraper
 GEMINI_API_KEY=your_gemini_api_key
-GEMINI_MODEL=gemini-2.5-flash-lite
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_TREND_MODEL=gemini-2.5-flash
 ENABLE_SEARCH_GROUNDING=true
 SESSION_TTL_HOURS=24
-ANALYSIS_CACHE_TTL_MINUTES=360
+ANALYSIS_CACHE_TTL_MINUTES=60
 ANALYSIS_LIMIT_PER_HOUR=25
 AUTH_LIMIT_PER_15_MINUTES=10
 ```

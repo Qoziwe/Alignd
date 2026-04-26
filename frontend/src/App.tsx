@@ -21,6 +21,7 @@ import {
 
 type Screen = 'home' | 'loading' | 'results';
 type AuthMode = 'login' | 'register';
+type PreloaderMode = 'analysis' | 'saved' | null;
 
 type User = {
   id: string;
@@ -99,21 +100,6 @@ type AnalysisHistoryItem = {
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000').replace(/\/$/, '');
-const MIN_LOADING_MS = 1400;
-
-function wait(ms: number) {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
-}
-
-async function holdLoading(startedAt: number) {
-  const remaining = MIN_LOADING_MS - (Date.now() - startedAt);
-  if (remaining > 0) {
-    await wait(remaining);
-  }
-}
-
 function extractErrorMessage(payload: unknown, fallback: string) {
   if (!payload || typeof payload !== 'object') {
     return fallback;
@@ -147,6 +133,73 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+function LoadingAtom() {
+  return (
+    <div className="loading-atom" aria-hidden="true">
+      <div className="loading-atom-rings">
+        <div className="loading-atom-ring loading-atom-ring-one"></div>
+        <div className="loading-atom-ring loading-atom-ring-two"></div>
+        <div className="loading-atom-ring loading-atom-ring-three"></div>
+      </div>
+      <div className="loading-atom-core">
+        <div className="absolute inset-4 rounded-full border border-white/10"></div>
+        <Sparkles size={34} className="loading-spark text-white" strokeWidth={2.2} />
+      </div>
+    </div>
+  );
+}
+
+function AnalysisPreloader() {
+  return (
+    <div className="flex w-full max-w-[920px] flex-col items-center text-center">
+      <LoadingAtom />
+
+      <div className="mt-2 inline-flex min-h-[42px] items-center gap-3 rounded-full border border-white/12 bg-white/6 px-5 text-[14px] font-semibold text-gray-200">
+        <span className="h-2 w-2 rounded-full bg-[#4FD5B2] shadow-[0_0_12px_rgba(79,213,178,0.9)]"></span>
+        Анализ профиля запущен
+      </div>
+
+      <h2 className="mt-7 text-[30px] font-black leading-[1.05] tracking-[-0.02em] text-white sm:text-[42px]">
+        Собираем персональный разбор
+      </h2>
+      <p className="mt-5 max-w-[620px] text-[16px] leading-[1.55] text-gray-400 sm:text-[18px]">
+        Проверяем профиль, считываем контент-сигналы и подбираем идеи, которые подходят именно под вашу нишу.
+      </p>
+
+      <div className="mt-10 w-full max-w-[640px] overflow-hidden rounded-full border border-white/10 bg-white/8 p-1">
+        <div className="loading-progress h-[8px] rounded-full"></div>
+      </div>
+
+      <div className="mt-8 grid w-full max-w-[780px] grid-cols-1 gap-3 text-left sm:grid-cols-3">
+        {[
+          ['01', 'Профиль', 'Данные и описание'],
+          ['02', 'Контент', 'Посты и реакции'],
+          ['03', 'Идеи', 'Тренды и хуки'],
+        ].map(([step, title, description]) => (
+          <div key={step} className="rounded-[16px] border border-white/10 bg-[#15151A] px-5 py-4">
+            <div className="text-[12px] font-black text-[#4FD5B2]">{step}</div>
+            <div className="mt-2 text-[16px] font-bold text-white">{title}</div>
+            <div className="mt-1 text-[13px] text-gray-500">{description}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SavedAnalysisPreloader() {
+  return (
+    <div className="flex w-full max-w-[420px] flex-col items-center rounded-[18px] border border-white/10 bg-[#111116] px-8 py-8 text-center shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+      <div className="text-[24px] font-black tracking-[0] text-white">ALIGND</div>
+      <div className="simple-loader-line mt-5">
+        <span></span>
+      </div>
+      <div className="mt-5 text-[16px] font-bold text-white">Открываем отчёт</div>
+      <div className="mt-2 text-[14px] text-gray-500">Загружаем сохранённый анализ</div>
+    </div>
+  );
+}
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>('home');
   const [authMode, setAuthMode] = useState<AuthMode>('register');
@@ -167,7 +220,7 @@ export default function App() {
   const [url, setUrl] = useState('');
   const [niche, setNiche] = useState('');
   const [isAdviceExpanded, setIsAdviceExpanded] = useState(false);
-  const [isPreloaderVisible, setIsPreloaderVisible] = useState(false);
+  const [preloaderMode, setPreloaderMode] = useState<PreloaderMode>(null);
   const formSectionRef = useRef<HTMLDivElement | null>(null);
 
   const isResults = screen === 'results';
@@ -204,9 +257,7 @@ export default function App() {
     }
 
     setAnalysisError('');
-    setIsPreloaderVisible(true);
-    setScreen('loading');
-    const loadingStartedAt = Date.now();
+    setPreloaderMode('saved');
 
     try {
       const payload = await fetchJson<AnalysisResponse>(`${API_BASE_URL}/analyses/${analysisId}`, {
@@ -214,16 +265,14 @@ export default function App() {
           Authorization: `Bearer ${token}`,
         },
       });
-      await holdLoading(loadingStartedAt);
       setReport(payload);
       setUrl(payload.account.profileUrl || '');
       setNiche(payload.analysis.profileSummary.niche || payload.account.niche || '');
       setScreen('results');
-      setIsPreloaderVisible(false);
+      setPreloaderMode(null);
     } catch (error) {
-      await holdLoading(loadingStartedAt);
       setScreen('home');
-      setIsPreloaderVisible(false);
+      setPreloaderMode(null);
       setAnalysisError(
         error instanceof Error ? error.message : 'Не удалось открыть сохранённый анализ.',
       );
@@ -262,6 +311,16 @@ export default function App() {
   useEffect(() => {
     setAvatarLoadFailed(false);
   }, [report?.id, report?.account.profilePicUrl]);
+
+  useEffect(() => {
+    if (screen !== 'results' || !report) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      window.scrollTo({top: 0, left: 0, behavior: 'auto'});
+    });
+  }, [screen, report]);
 
   const scrollToForm = () => {
     formSectionRef.current?.scrollIntoView({
@@ -341,9 +400,8 @@ export default function App() {
 
     setAnalysisError('');
     setIsAdviceExpanded(false);
-    setIsPreloaderVisible(true);
+    setPreloaderMode('analysis');
     setScreen('loading');
-    const loadingStartedAt = Date.now();
 
     try {
       const payload = await fetchJson<AnalysisResponse>(`${API_BASE_URL}/analyze-account`, {
@@ -358,16 +416,14 @@ export default function App() {
         }),
       });
 
-      await holdLoading(loadingStartedAt);
       setReport(payload);
       setScreen('results');
-      setIsPreloaderVisible(false);
+      setPreloaderMode(null);
       await loadHistory(token);
     } catch (error) {
-      await holdLoading(loadingStartedAt);
       setAnalysisError(error instanceof Error ? error.message : 'Не удалось выполнить анализ.');
       setScreen('home');
-      setIsPreloaderVisible(false);
+      setPreloaderMode(null);
     }
   };
 
@@ -394,9 +450,10 @@ export default function App() {
         )}
       </div>
 
-      {isPreloaderVisible && (
+      {preloaderMode && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#050507]/94 px-6 backdrop-blur-md">
-          <div className="flex w-full max-w-[920px] flex-col items-center text-center">
+          {preloaderMode === 'analysis' ? <AnalysisPreloader /> : <SavedAnalysisPreloader />}
+          <div className="hidden w-full max-w-[920px] flex-col items-center text-center">
             <div className="relative flex h-[210px] w-[210px] items-center justify-center sm:h-[250px] sm:w-[250px]">
               <div className="loading-orbit loading-orbit-outer"></div>
               <div className="loading-orbit loading-orbit-inner"></div>
@@ -677,7 +734,8 @@ export default function App() {
 
         {screen === 'loading' && (
           <div className="mx-auto flex min-h-[62vh] w-full max-w-[980px] flex-col items-center justify-center py-20 text-center">
-            <div className="relative flex h-[210px] w-[210px] items-center justify-center sm:h-[250px] sm:w-[250px]">
+            <AnalysisPreloader />
+            <div className="hidden h-[210px] w-[210px] items-center justify-center sm:h-[250px] sm:w-[250px]">
               <div className="loading-orbit loading-orbit-outer"></div>
               <div className="loading-orbit loading-orbit-inner"></div>
               <div className="loading-sweep"></div>

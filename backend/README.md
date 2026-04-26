@@ -52,7 +52,8 @@ flowchart TD
     Auth --> Cache[Check recent cached analysis]
     Cache -->|cache miss| Apify[Fetch profile from Apify]
     Apify --> Normalize[Normalize account data]
-    Normalize --> Gemini[Send structured prompt to Gemini]
+    Normalize --> TrendGemini[Research fresh trends with Gemini + Google Search]
+    TrendGemini --> Gemini[Match profile to researched trends]
     Gemini --> Shape[Validate and normalize response]
     Shape --> Save[Save analysis to database]
     Save --> Res[Return report JSON]
@@ -74,6 +75,7 @@ flowchart TD
 | `APIFY_TIKTOK_ACTOR_ID` | No | Apify actor id for TikTok profile parsing |
 | `GEMINI_API_KEY` | Yes | Gemini API key |
 | `GEMINI_MODEL` | Yes | Gemini model name |
+| `GEMINI_TREND_MODEL` | No | Gemini model used for the fresh trend research step. Defaults to `GEMINI_MODEL` |
 | `ENABLE_SEARCH_GROUNDING` | Yes | Enable Gemini grounding tool |
 | `SESSION_TTL_HOURS` | Yes | Auth session lifetime |
 | `ANALYSIS_CACHE_TTL_MINUTES` | Yes | Saved cache TTL |
@@ -94,10 +96,11 @@ APIFY_TOKEN=your_apify_token
 APIFY_INSTAGRAM_ACTOR_ID=apify~instagram-scraper
 APIFY_TIKTOK_ACTOR_ID=clockworks~tiktok-profile-scraper
 GEMINI_API_KEY=your_gemini_api_key
-GEMINI_MODEL=gemini-2.5-flash-lite
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_TREND_MODEL=gemini-2.5-flash
 ENABLE_SEARCH_GROUNDING=true
 SESSION_TTL_HOURS=24
-ANALYSIS_CACHE_TTL_MINUTES=360
+ANALYSIS_CACHE_TTL_MINUTES=60
 ANALYSIS_LIMIT_PER_HOUR=25
 AUTH_LIMIT_PER_15_MINUTES=10
 ```

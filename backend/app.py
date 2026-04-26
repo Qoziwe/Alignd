@@ -26,8 +26,9 @@ DEFAULT_APIFY_INSTAGRAM_ACTOR_ID = "apify~instagram-scraper"
 DEFAULT_APIFY_TIKTOK_ACTOR_ID = "clockworks~tiktok-profile-scraper"
 APIFY_RUN_SYNC_URL = "https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
-DEFAULT_ANALYSIS_CACHE_TTL_MINUTES = 360
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_TREND_MODEL = DEFAULT_GEMINI_MODEL
+DEFAULT_ANALYSIS_CACHE_TTL_MINUTES = 60
 DEFAULT_SESSION_TTL_HOURS = 24
 DEFAULT_ANALYSIS_LIMIT_PER_HOUR = 25
 DEFAULT_AUTH_LIMIT_PER_15_MIN = 10
@@ -303,6 +304,7 @@ class AppConfig:
     apify_tiktok_actor_id: str
     gemini_api_key: str | None
     gemini_model: str
+    gemini_trend_model: str
     analysis_cache_ttl_minutes: int
     session_ttl_hours: int
     analysis_limit_per_hour: int
@@ -344,6 +346,11 @@ class AppConfig:
             ).strip(),
             gemini_api_key=(source.get("GEMINI_API_KEY") or "").strip() or None,
             gemini_model=str(source.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)).strip(),
+            gemini_trend_model=str(
+                source.get("GEMINI_TREND_MODEL")
+                or source.get("GEMINI_MODEL")
+                or DEFAULT_GEMINI_TREND_MODEL
+            ).strip(),
             analysis_cache_ttl_minutes=parse_int(
                 source.get("ANALYSIS_CACHE_TTL_MINUTES"), DEFAULT_ANALYSIS_CACHE_TTL_MINUTES
             ),
@@ -971,11 +978,11 @@ def build_apify_url(actor_id: str) -> str:
     return f"{APIFY_RUN_SYNC_URL.format(actor_id=actor_id)}?{query_string}"
 
 
-def build_gemini_url() -> str:
+def build_gemini_url(model: str | None = None) -> str:
     api_key = current_app.config["GEMINI_API_KEY"]
     if not api_key:
         raise ApiError("GEMINI_API_KEY is not configured on the server.", 500)
-    model = current_app.config["GEMINI_MODEL"]
+    model = model or current_app.config["GEMINI_MODEL"]
     query_string = parse.urlencode({"key": api_key})
     return f"{GEMINI_BASE_URL.format(model=model)}?{query_string}"
 
@@ -1034,21 +1041,65 @@ def fetch_apify_items(profile_url: str, platform: str = "Instagram", username: s
         raise UpstreamServiceError("Источник профиля вернул некорректный ответ.", 502) from exc
 
 
-def build_analysis_prompt(account: dict[str, Any], niche: str) -> str:
+def build_trend_research_prompt(account: dict[str, Any], niche: str) -> str:
     platform = str(account.get("platform") or "social media")
+    today = utc_now().date().isoformat()
     prompt_payload = {
+        "currentDate": today,
+        "platform": platform,
+        "userProvidedNiche": niche,
+        "accountSignals": {
+            "username": account.get("username"),
+            "fullName": account.get("fullName"),
+            "biography": account.get("biography"),
+            "niche": account.get("niche"),
+            "recentPosts": account.get("recentPosts", [])[:6],
+            "followersCount": account.get("followersCount"),
+            "postsCount": account.get("postsCount"),
+        },
+        "researchGoal": (
+            "Use Google Search grounding actively to find the freshest short-form video trends available today. "
+            "Prioritize TikTok, Instagram Reels, YouTube Shorts, creator economy/news, meme formats, audio formats, "
+            "editing patterns, hooks, and recurring content structures from the last 7-14 days. "
+            "Prefer current rising signals over evergreen advice. Adapt each trend to the account niche."
+        ),
+        "requirements": [
+            "Return only valid JSON without markdown.",
+            "Return exactly 8 trends.",
+            "Each trend must be current, specific, actionable, and useful for the analyzed profile.",
+            "Use type 'top' for currently dominant trends and 'growing' for fast-rising trends.",
+            "Include freshnessWindow, evidence, and adaptation for every trend.",
+            "Each sourceUrls item must be a URL string. Use sources discovered via Google Search grounding when possible.",
+            (
+                "Use this JSON shape only: "
+                "{trends:[{type,title,description,freshnessWindow,evidence,adaptation,sourceUrls:[string]}],"
+                "researchSummary:string}"
+            ),
+        ],
+    }
+    return json.dumps(prompt_payload, ensure_ascii=False)
+
+
+def build_analysis_prompt(account: dict[str, Any], niche: str, trend_research: dict[str, Any] | None = None) -> str:
+    platform = str(account.get("platform") or "social media")
+    today = utc_now().date().isoformat()
+    prompt_payload = {
+        "currentDate": today,
         "account": account,
         "userProvidedNiche": niche,
+        "freshTrendResearch": trend_research or {},
         "analysisGoal": (
             f"Проанализируй {platform}-профиль, его позиционирование и контент-сигналы. "
-            "Сопоставь это с актуальными форматами коротких видео и паттернами контента, "
-            f"которые работают сейчас для {platform}. "
+            "Сопоставь это с freshTrendResearch: выбери самые свежие, доказуемые и применимые тренды, "
+            f"которые работают на {today} для {platform}. "
             "Верни только валидный JSON на русском языке без markdown."
         ),
         "requirements": [
             "Profile summary must contain niche, compatibilityLabel, compatibilityScore, positioning, audienceSummary.",
             "Return exactly 4 trends.",
             "Return exactly 2 trends with type 'top' and 2 trends with type 'growing'.",
+            "Select the 4 report trends from freshTrendResearch unless there is a clear account-fit reason to exclude one.",
+            "Trend descriptions must explain why the trend is fresh now and how this profile can use it.",
             "Return exactly 3 ideas.",
             "Return exactly 6 hooks.",
             "Recommendations must contain summary and 5-8 bullets.",
@@ -1094,6 +1145,32 @@ def parse_json_response_text(text: str) -> dict[str, Any]:
         raise UpstreamServiceError("AI returned an invalid JSON payload.", 502) from exc
 
 
+def source_from_url(url: Any) -> dict[str, str] | None:
+    normalized_url = str(url or "").strip()
+    parsed = urlparse(normalized_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return {"title": parsed.netloc, "url": normalized_url}
+
+
+def merge_sources(*source_groups: list[dict[str, str]]) -> list[dict[str, str]]:
+    merged: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for sources in source_groups:
+        for source in sources:
+            url = str(source.get("url") or "").strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            merged.append(
+                {
+                    "title": str(source.get("title") or url).strip(),
+                    "url": url,
+                }
+            )
+    return merged
+
+
 def extract_grounding_sources(payload: dict[str, Any]) -> list[dict[str, str]]:
     candidates = payload.get("candidates", [])
     if not candidates:
@@ -1114,6 +1191,104 @@ def extract_grounding_sources(payload: dict[str, Any]) -> list[dict[str, str]]:
         sources.append({"title": title or uri, "url": uri})
 
     return sources
+
+
+def call_gemini_generate(prompt: str, model: str, use_search_grounding: bool) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.45},
+    }
+    if use_search_grounding:
+        payload["tools"] = [{"google_search": {}}]
+
+    gemini_request = request.Request(
+        build_gemini_url(model),
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with request.urlopen(gemini_request, timeout=120) as response:
+            raw_body = response.read().decode("utf-8")
+            return json.loads(raw_body)
+    except error.HTTPError as exc:
+        raw_error = exc.read().decode("utf-8", errors="replace")
+        raise UpstreamServiceError(
+            "Unable to complete AI analysis.",
+            exc.code,
+            raw_error or "Gemini request failed.",
+        ) from exc
+    except error.URLError as exc:
+        raise UpstreamServiceError(
+            "AI analysis service is temporarily unavailable.",
+            502,
+            str(exc.reason),
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise UpstreamServiceError("AI analysis service returned invalid JSON.", 502) from exc
+
+
+def normalize_trend_research(research_payload: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    trends = research_payload.get("trends")
+    if not isinstance(trends, list) or len(trends) < 4:
+        raise UpstreamServiceError("AI returned an invalid trend research block.", 502)
+
+    normalized_trends: list[dict[str, Any]] = []
+    sources: list[dict[str, str]] = []
+    for item in trends[:8]:
+        if not isinstance(item, dict):
+            continue
+
+        source_urls = item.get("sourceUrls")
+        if not isinstance(source_urls, list):
+            source_urls = []
+
+        normalized_source_urls: list[str] = []
+        for url in source_urls:
+            source = source_from_url(url)
+            if not source:
+                continue
+            normalized_source_urls.append(source["url"])
+            sources.append(source)
+
+        normalized_trends.append(
+            {
+                "type": normalize_trend_type(item.get("type")) or "growing",
+                "title": str(item.get("title", "")).strip(),
+                "description": str(item.get("description", "")).strip(),
+                "freshnessWindow": str(item.get("freshnessWindow", "")).strip(),
+                "evidence": str(item.get("evidence", "")).strip(),
+                "adaptation": str(item.get("adaptation", "")).strip(),
+                "sourceUrls": normalized_source_urls,
+            }
+        )
+
+    if len(normalized_trends) < 4:
+        raise UpstreamServiceError("AI returned too few usable trend research items.", 502)
+
+    return (
+        {
+            "trends": normalized_trends,
+            "researchSummary": str(research_payload.get("researchSummary", "")).strip(),
+            "researchedAt": iso_now(),
+        },
+        sources,
+    )
+
+
+def research_fresh_trends(account: dict[str, Any], niche: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    if not current_app.config["ENABLE_SEARCH_GROUNDING"]:
+        return {"trends": [], "researchSummary": "", "researchedAt": iso_now()}, []
+
+    response_payload = call_gemini_generate(
+        build_trend_research_prompt(account, niche),
+        current_app.config["GEMINI_TREND_MODEL"],
+        True,
+    )
+    research_payload = parse_json_response_text(extract_text_parts(response_payload))
+    research, explicit_sources = normalize_trend_research(research_payload)
+    return research, merge_sources(extract_grounding_sources(response_payload), explicit_sources)
 
 
 def ensure_analysis_shape(analysis: dict[str, Any]) -> dict[str, Any]:
@@ -1180,45 +1355,18 @@ def ensure_analysis_shape(analysis: dict[str, Any]) -> dict[str, Any]:
 
 
 def generate_analysis(account: dict[str, Any], niche: str) -> tuple[dict[str, Any], list[dict[str, str]], str]:
-    payload: dict[str, Any] = {
-        "contents": [{"parts": [{"text": build_analysis_prompt(account, niche)}]}],
-        "generationConfig": {"temperature": 0.6},
-    }
-    if current_app.config["ENABLE_SEARCH_GROUNDING"]:
-        payload["tools"] = [{"google_search": {}}]
-
-    gemini_request = request.Request(
-        build_gemini_url(),
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
+    trend_research, trend_sources = research_fresh_trends(account, niche)
+    response_payload = call_gemini_generate(
+        build_analysis_prompt(account, niche, trend_research),
+        current_app.config["GEMINI_MODEL"],
+        current_app.config["ENABLE_SEARCH_GROUNDING"],
     )
-
-    try:
-        with request.urlopen(gemini_request, timeout=120) as response:
-            raw_body = response.read().decode("utf-8")
-            response_payload = json.loads(raw_body)
-    except error.HTTPError as exc:
-        raw_error = exc.read().decode("utf-8", errors="replace")
-        raise UpstreamServiceError(
-            "Unable to complete AI analysis.",
-            exc.code,
-            raw_error or "Gemini request failed.",
-        ) from exc
-    except error.URLError as exc:
-        raise UpstreamServiceError(
-            "AI analysis service is temporarily unavailable.",
-            502,
-            str(exc.reason),
-        ) from exc
-    except json.JSONDecodeError as exc:
-        raise UpstreamServiceError("AI analysis service returned invalid JSON.", 502) from exc
 
     analysis_payload = parse_json_response_text(extract_text_parts(response_payload))
     if "account" not in analysis_payload:
         analysis_payload["account"] = account
     analysis = ensure_analysis_shape(analysis_payload)
-    sources = extract_grounding_sources(response_payload)
+    sources = merge_sources(trend_sources, extract_grounding_sources(response_payload))
     return analysis, sources, current_app.config["GEMINI_MODEL"]
 
 
@@ -1546,6 +1694,7 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
         APIFY_TIKTOK_ACTOR_ID=config.apify_tiktok_actor_id,
         GEMINI_API_KEY=config.gemini_api_key,
         GEMINI_MODEL=config.gemini_model,
+        GEMINI_TREND_MODEL=config.gemini_trend_model,
         ANALYSIS_CACHE_TTL_MINUTES=config.analysis_cache_ttl_minutes,
         SESSION_TTL_HOURS=config.session_ttl_hours,
         ANALYSIS_LIMIT_PER_HOUR=config.analysis_limit_per_hour,

@@ -15,6 +15,126 @@ body {
   color: white;
 }
 
+.loading-atom {
+  position: relative;
+  display: flex;
+  width: 220px;
+  height: 220px;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-atom::before,
+.loading-atom::after {
+  content: "";
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+}
+
+.loading-atom::before {
+  inset: 18px;
+  background:
+    radial-gradient(circle at 50% 8%, rgba(79, 213, 178, 0.28), transparent 14px),
+    radial-gradient(circle at 86% 33%, rgba(79, 213, 178, 0.2), transparent 18px),
+    radial-gradient(circle at 74% 82%, rgba(79, 213, 178, 0.24), transparent 16px),
+    radial-gradient(circle at 18% 70%, rgba(79, 213, 178, 0.16), transparent 18px);
+  filter: blur(4px);
+  opacity: 0.72;
+  animation: loading-quantum-haze 3.8s ease-in-out infinite;
+}
+
+.loading-atom::after {
+  inset: 28px;
+  border: 1px solid rgba(79, 213, 178, 0.12);
+  box-shadow:
+    0 0 42px rgba(79, 213, 178, 0.12),
+    inset 0 0 32px rgba(79, 213, 178, 0.08);
+  opacity: 0.7;
+  animation: loading-quantum-shell 4.6s ease-in-out infinite;
+}
+
+.loading-atom-rings {
+  position: absolute;
+  inset: 0;
+  animation: loading-atom-turn 7s linear infinite;
+  transform-origin: center;
+}
+
+.loading-atom-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 190px;
+  height: 74px;
+  margin-left: -95px;
+  margin-top: -37px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 50% -6%, rgba(79, 213, 178, 0.5) 0 3px, rgba(79, 213, 178, 0.2) 5px, transparent 18px),
+    radial-gradient(circle at 88% 24%, rgba(79, 213, 178, 0.34) 0 2px, rgba(79, 213, 178, 0.16) 5px, transparent 17px),
+    radial-gradient(circle at 88% 76%, rgba(79, 213, 178, 0.28) 0 2px, rgba(79, 213, 178, 0.12) 5px, transparent 17px),
+    radial-gradient(circle at 50% 106%, rgba(79, 213, 178, 0.42) 0 3px, rgba(79, 213, 178, 0.18) 5px, transparent 18px),
+    radial-gradient(circle at 12% 76%, rgba(79, 213, 178, 0.22) 0 2px, rgba(79, 213, 178, 0.1) 5px, transparent 17px),
+    radial-gradient(circle at 12% 24%, rgba(79, 213, 178, 0.3) 0 2px, rgba(79, 213, 178, 0.14) 5px, transparent 17px);
+  transform: rotate(var(--atom-angle));
+  transform-origin: center;
+  animation: loading-electron-field 1.7s ease-in-out infinite;
+}
+
+.loading-atom-ring::before,
+.loading-atom-ring::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle, #b9ffe9 0 2px, #4fd5b2 3px, rgba(79, 213, 178, 0.28) 7px, transparent 11px);
+  filter: blur(0.2px);
+  box-shadow: 0 0 22px rgba(79, 213, 178, 0.75);
+  opacity: 0.82;
+  animation: loading-electron-superposition 1.25s ease-in-out infinite;
+}
+
+.loading-atom-ring::before {
+  left: -8px;
+  animation-delay: -0.55s;
+}
+
+.loading-atom-ring::after {
+  right: -8px;
+}
+
+.loading-atom-ring-one {
+  --atom-angle: 0deg;
+}
+
+.loading-atom-ring-two {
+  --atom-angle: 60deg;
+}
+
+.loading-atom-ring-three {
+  --atom-angle: 120deg;
+}
+
+.loading-atom-core {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 116px;
+  height: 116px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 9999px;
+  background: #141419;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+}
+
 .loading-orbit {
   position: absolute;
   border-radius: 9999px;
@@ -65,14 +185,108 @@ body {
 }
 
 .loading-progress {
-  width: 38%;
-  box-shadow: 0 0 22px rgba(79, 213, 178, 0.65);
-  animation: loading-progress 2.6s ease-in-out infinite;
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: rgba(79, 213, 178, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(79, 213, 178, 0.08);
+}
+
+.loading-progress::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, #4fd5b2 42%, #b9ffe9 50%, #4fd5b2 58%, transparent);
+  box-shadow: 0 0 18px rgba(79, 213, 178, 0.7);
+  animation: loading-progress 1.35s linear infinite;
+  will-change: transform;
+}
+
+.simple-loader-line {
+  width: min(240px, 70vw);
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.simple-loader-line span {
+  display: block;
+  width: 44%;
+  height: 100%;
+  border-radius: inherit;
+  background: #ececec;
+  animation: simple-loader-line 0.95s linear infinite;
+}
+
+@keyframes loading-atom-turn {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes loading-orbit {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes loading-quantum-haze {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.96) rotate(0deg);
+  }
+
+  50% {
+    opacity: 0.88;
+    transform: scale(1.04) rotate(9deg);
+  }
+}
+
+@keyframes loading-quantum-shell {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.98);
+  }
+
+  50% {
+    opacity: 0.84;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes loading-electron-field {
+  0%,
+  100% {
+    opacity: 0.58;
+    filter: drop-shadow(0 0 4px rgba(79, 213, 178, 0.22));
+  }
+
+  45% {
+    opacity: 0.92;
+    filter: drop-shadow(0 0 12px rgba(79, 213, 178, 0.42));
+  }
+}
+
+@keyframes loading-electron-superposition {
+  0%,
+  100% {
+    opacity: 0.48;
+    transform: scale(0.72);
+  }
+
+  35% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+
+  70% {
+    opacity: 0.62;
+    transform: scale(1.28);
   }
 }
 
@@ -91,17 +305,20 @@ body {
 
 @keyframes loading-progress {
   0% {
-    width: 18%;
-    transform: translateX(0);
-  }
-
-  50% {
-    width: 68%;
-    transform: translateX(28%);
+    transform: translateX(-120%);
   }
 
   100% {
-    width: 30%;
-    transform: translateX(230%);
+    transform: translateX(260%);
+  }
+}
+
+@keyframes simple-loader-line {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(260%);
   }
 }
