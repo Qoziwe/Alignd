@@ -16,7 +16,7 @@ import {
   Zap,
 } from 'lucide-react';
 import heroLiquid from '../assets/image.png';
-import {clearStoredToken, getStoredToken, setStoredToken} from './lib/auth';
+import {COOKIE_SESSION_MARKER} from './lib/auth';
 import {
   extractUsername,
   formatAnalysisDate,
@@ -157,7 +157,10 @@ function extractErrorMessage(payload: unknown, fallback: string) {
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(url, options);
+    response = await fetch(url, {
+      ...options,
+      credentials: 'include',
+    });
   } catch (error) {
     throw new ApiRequestError(error instanceof Error ? error.message : 'Network request failed.', 0);
   }
@@ -281,16 +284,12 @@ export default function App() {
       : 0;
   const latestAnalysisDate = history[0]?.createdAt ? formatAnalysisDate(history[0].createdAt) : 'Пока нет';
 
-  const loadHistory = async (authToken: string) => {
+  const loadHistory = async () => {
     setHistoryLoading(true);
     setHistoryError('');
 
     try {
-      const payload = await fetchJson<{items: AnalysisHistoryItem[]}>(`${API_BASE_URL}/analyses`, {
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-        },
-      });
+      const payload = await fetchJson<{items: AnalysisHistoryItem[]}>(`${API_BASE_URL}/analyses`);
       setHistory(payload.items);
     } catch (error) {
       setHistoryError(error instanceof Error ? error.message : 'Не удалось загрузить историю.');
@@ -308,11 +307,7 @@ export default function App() {
     setPreloaderMode('saved');
 
     try {
-      const payload = await fetchJson<AnalysisResponse>(`${API_BASE_URL}/analyses/${analysisId}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const payload = await fetchJson<AnalysisResponse>(`${API_BASE_URL}/analyses/${analysisId}`);
       setReport(payload);
       setUrl(payload.account.profileUrl || '');
       setNiche(payload.analysis.profileSummary.niche || payload.account.niche || '');
@@ -328,27 +323,14 @@ export default function App() {
   };
 
   useEffect(() => {
-    const storedToken = getStoredToken();
-
-    if (!storedToken) {
-      setAuthLoading(false);
-      return;
-    }
-
-    setToken(storedToken);
-
-    fetchJson<{user: User}>(`${API_BASE_URL}/auth/me`, {
-      headers: {
-        Authorization: `Bearer ${storedToken}`,
-      },
-    })
+    fetchJson<{user: User}>(`${API_BASE_URL}/auth/me`)
       .then((payload) => {
+        setToken(COOKIE_SESSION_MARKER);
         setUser(payload.user);
-        return loadHistory(storedToken);
+        return loadHistory();
       })
       .catch((error) => {
         if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403)) {
-          clearStoredToken();
           setToken('');
           setUser(null);
           return;
@@ -397,12 +379,11 @@ export default function App() {
         }),
       });
 
-      setStoredToken(payload.token);
-      setToken(payload.token);
+      setToken(COOKIE_SESSION_MARKER);
       setUser(payload.user);
       setPassword('');
       setAuthMode('login');
-      await loadHistory(payload.token);
+      await loadHistory();
       scrollToForm();
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : 'Не удалось выполнить вход.');
@@ -419,15 +400,11 @@ export default function App() {
     try {
       await fetchJson<{status: string}>(`${API_BASE_URL}/auth/logout`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
     } catch {
       // Ignore server-side logout failures and clear the client session anyway.
     }
 
-    clearStoredToken();
     setToken('');
     setUser(null);
     setHistory([]);
@@ -464,9 +441,6 @@ export default function App() {
     try {
       const payload = await fetchJson<{status: string; deletedCount: number}>(`${API_BASE_URL}/analyses/clear`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
       setHistory([]);
       setReport(null);
@@ -499,7 +473,6 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           profileUrl: url.trim(),
@@ -510,7 +483,7 @@ export default function App() {
       setReport(payload);
       setScreen('results');
       setPreloaderMode(null);
-      await loadHistory(token);
+      await loadHistory();
     } catch (error) {
       setAnalysisError(error instanceof Error ? error.message : 'Не удалось выполнить анализ.');
       setScreen('home');

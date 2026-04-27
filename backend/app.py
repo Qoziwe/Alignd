@@ -313,6 +313,9 @@ class AppConfig:
     host: str
     debug: bool
     enable_search_grounding: bool
+    session_cookie_name: str
+    session_cookie_secure: bool
+    session_cookie_samesite: str
 
     @classmethod
     def from_env(cls, overrides: dict[str, Any] | None = None) -> "AppConfig":
@@ -367,6 +370,9 @@ class AppConfig:
             host=str(source.get("HOST", "0.0.0.0")).strip(),
             debug=parse_bool(source.get("DEBUG"), app_env != "production"),
             enable_search_grounding=parse_bool(source.get("ENABLE_SEARCH_GROUNDING"), True),
+            session_cookie_name=str(source.get("SESSION_COOKIE_NAME", "alignd_session")).strip(),
+            session_cookie_secure=parse_bool(source.get("SESSION_COOKIE_SECURE"), app_env == "production"),
+            session_cookie_samesite=str(source.get("SESSION_COOKIE_SAMESITE", "Lax")).strip() or "Lax",
         )
 
 
@@ -675,9 +681,16 @@ def create_session(user_id: str) -> str:
 
 def get_token_from_request() -> str:
     auth_header = flask_request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header.removeprefix("Bearer ").strip()
+
+    cookie_token = flask_request.cookies.get(current_app.config["SESSION_COOKIE_NAME"], "").strip()
+    if cookie_token:
+        return cookie_token
+
     if not auth_header.startswith("Bearer "):
         raise ApiError("Требуется авторизация.", 401)
-    return auth_header.removeprefix("Bearer ").strip()
+    return ""
 
 
 def get_current_user() -> dict[str, Any]:
@@ -717,6 +730,29 @@ def logout_current_user() -> None:
     token_hash = getattr(g, "current_token_hash", None)
     if token_hash:
         get_database().execute("DELETE FROM auth_sessions WHERE token_hash = ?", (token_hash,))
+
+
+def attach_session_cookie(response, token: str):
+    response.set_cookie(
+        current_app.config["SESSION_COOKIE_NAME"],
+        token,
+        max_age=current_app.config["SESSION_TTL_HOURS"] * 60 * 60,
+        httponly=True,
+        secure=current_app.config["SESSION_COOKIE_SECURE"],
+        samesite=current_app.config["SESSION_COOKIE_SAMESITE"],
+        path="/",
+    )
+    return response
+
+
+def clear_session_cookie(response):
+    response.delete_cookie(
+        current_app.config["SESSION_COOKIE_NAME"],
+        path="/",
+        samesite=current_app.config["SESSION_COOKIE_SAMESITE"],
+        secure=current_app.config["SESSION_COOKIE_SECURE"],
+    )
+    return response
 
 
 def json_error(message: str, status_code: int, details: Any | None = None):
@@ -1531,6 +1567,7 @@ def register_routes(app: Flask) -> None:
             response.headers["Vary"] = "Origin"
         response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -1576,7 +1613,9 @@ def register_routes(app: Flask) -> None:
 
         user = create_user(email, display_name, password)
         token = create_session(user["id"])
-        return jsonify({"token": token, "user": user_to_payload(user)}), 201
+        response = jsonify({"token": token, "user": user_to_payload(user)})
+        attach_session_cookie(response, token)
+        return response, 201
 
     @app.route("/auth/login", methods=["POST", "OPTIONS"])
     def login():
@@ -1599,7 +1638,8 @@ def register_routes(app: Flask) -> None:
             raise ApiError("Invalid email or password.", 401)
 
         token = create_session(user["id"])
-        return jsonify({"token": token, "user": user_to_payload(user)})
+        response = jsonify({"token": token, "user": user_to_payload(user)})
+        return attach_session_cookie(response, token)
 
     @app.route("/auth/me", methods=["GET", "OPTIONS"])
     def auth_me():
@@ -1614,7 +1654,8 @@ def register_routes(app: Flask) -> None:
             return ("", 204)
         get_current_user()
         logout_current_user()
-        return jsonify({"status": "logged_out"})
+        response = jsonify({"status": "logged_out"})
+        return clear_session_cookie(response)
 
     @app.route("/analyses", methods=["GET", "DELETE", "OPTIONS"])
     def analyses():
@@ -1725,6 +1766,9 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
         HOST=config.host,
         DEBUG=config.debug,
         ENABLE_SEARCH_GROUNDING=config.enable_search_grounding,
+        SESSION_COOKIE_NAME=config.session_cookie_name,
+        SESSION_COOKIE_SECURE=config.session_cookie_secure,
+        SESSION_COOKIE_SAMESITE=config.session_cookie_samesite,
     )
 
     database = Database(config.database_url)
