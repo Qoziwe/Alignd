@@ -1,13 +1,17 @@
+from io import BytesIO
 import tempfile
 import unittest
 from pathlib import Path
 import sys
+from urllib import error
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import (
     UpstreamServiceError,
+    AppConfig,
+    call_gemini_generate,
     clamp_score,
     create_app,
     ensure_analysis_shape,
@@ -309,6 +313,14 @@ class BackendApiTests(unittest.TestCase):
         self.assertEqual(sum(1 for trend in normalized["trends"] if trend["type"] == "top"), 2)
         self.assertEqual(sum(1 for trend in normalized["trends"] if trend["type"] == "growing"), 2)
 
+    def test_ensure_analysis_shape_keeps_user_requested_niche(self):
+        analysis = self.analysis_result()[0]
+        analysis["profileSummary"]["niche"] = "Исследование космоса, наука и астрономия"
+
+        normalized = ensure_analysis_shape(analysis, "рецепты еды")
+
+        self.assertEqual(normalized["profileSummary"]["niche"], "рецепты еды")
+
     def test_clamp_score_extracts_and_limits_values(self):
         self.assertEqual(clamp_score("87%"), 87)
         self.assertEqual(clamp_score("score: 140"), 100)
@@ -326,6 +338,54 @@ class BackendApiTests(unittest.TestCase):
 
         self.assertGreaterEqual(score, 75)
         self.assertLessEqual(score, 90)
+
+    @patch("app.request_gemini_generate")
+    def test_gemini_fallback_runs_after_retryable_error(self, request_gemini_generate_mock):
+        request_gemini_generate_mock.side_effect = [
+            error.HTTPError(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+                503,
+                "Service unavailable",
+                {},
+                BytesIO(b'{"error":{"status":"UNAVAILABLE"}}'),
+            ),
+            {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]},
+        ]
+
+        with self.app.app_context():
+            payload, model = call_gemini_generate(
+                "prompt",
+                "gemini-2.5-flash",
+                True,
+                ["gemma-4-31b-it"],
+            )
+
+        self.assertEqual(model, "gemma-4-31b-it")
+        self.assertIn("candidates", payload)
+        self.assertEqual(request_gemini_generate_mock.call_count, 2)
+        self.assertEqual(
+            request_gemini_generate_mock.call_args_list[0].args,
+            ("prompt", "gemini-2.5-flash", True),
+        )
+        self.assertEqual(
+            request_gemini_generate_mock.call_args_list[1].args,
+            ("prompt", "gemma-4-31b-it", False),
+        )
+
+    def test_default_trend_fallbacks_keep_search_capable_models(self):
+        config = AppConfig.from_env(
+            {
+                "APP_ENV": "development",
+                "DATABASE_URL": "sqlite:///:memory:",
+                "SECRET_KEY": "test-secret",
+                "GEMINI_FALLBACK_MODELS": None,
+                "GEMINI_TREND_FALLBACK_MODELS": None,
+            }
+        )
+
+        self.assertEqual(config.gemini_fallback_models, ["gemma-4-31b-it"])
+        self.assertEqual(config.gemini_trend_fallback_models, ["gemini-2.5-flash-lite", "gemini-2.0-flash"])
+        self.assertFalse(any(model.startswith("gemma-") for model in config.gemini_trend_fallback_models))
 
 
 if __name__ == "__main__":

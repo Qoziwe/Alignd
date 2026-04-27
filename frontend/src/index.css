@@ -40,23 +40,19 @@ body {
 
 .loading-atom::before {
   inset: 18px;
-  background:
-    radial-gradient(circle at 50% 8%, rgba(79, 213, 178, 0.28), transparent 14px),
-    radial-gradient(circle at 86% 33%, rgba(79, 213, 178, 0.2), transparent 18px),
-    radial-gradient(circle at 74% 82%, rgba(79, 213, 178, 0.24), transparent 16px),
-    radial-gradient(circle at 18% 70%, rgba(79, 213, 178, 0.16), transparent 18px);
-  filter: blur(4px);
-  opacity: 0.72;
+  background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.09), transparent 62%);
+  filter: blur(10px);
+  opacity: 0.52;
   animation: loading-quantum-haze 3.8s ease-in-out infinite;
 }
 
 .loading-atom::after {
   inset: 28px;
-  border: 1px solid rgba(79, 213, 178, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow:
-    0 0 42px rgba(79, 213, 178, 0.12),
-    inset 0 0 32px rgba(79, 213, 178, 0.08);
-  opacity: 0.7;
+    0 0 34px rgba(255, 255, 255, 0.05),
+    inset 0 0 28px rgba(255, 255, 255, 0.04);
+  opacity: 0.58;
   animation: loading-quantum-shell 4.6s ease-in-out infinite;
 }
 
@@ -77,13 +73,7 @@ body {
   margin-top: -37px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 9999px;
-  background:
-    radial-gradient(circle at 50% -6%, rgba(79, 213, 178, 0.5) 0 3px, rgba(79, 213, 178, 0.2) 5px, transparent 18px),
-    radial-gradient(circle at 88% 24%, rgba(79, 213, 178, 0.34) 0 2px, rgba(79, 213, 178, 0.16) 5px, transparent 17px),
-    radial-gradient(circle at 88% 76%, rgba(79, 213, 178, 0.28) 0 2px, rgba(79, 213, 178, 0.12) 5px, transparent 17px),
-    radial-gradient(circle at 50% 106%, rgba(79, 213, 178, 0.42) 0 3px, rgba(79, 213, 178, 0.18) 5px, transparent 18px),
-    radial-gradient(circle at 12% 76%, rgba(79, 213, 178, 0.22) 0 2px, rgba(79, 213, 178, 0.1) 5px, transparent 17px),
-    radial-gradient(circle at 12% 24%, rgba(79, 213, 178, 0.3) 0 2px, rgba(79, 213, 178, 0.14) 5px, transparent 17px);
+  background: rgba(255, 255, 255, 0.015);
   transform: rotate(var(--atom-angle));
   transform-origin: center;
   animation: loading-electron-field 1.7s ease-in-out infinite;
@@ -92,18 +82,7 @@ body {
 .loading-atom-ring::before,
 .loading-atom-ring::after {
   content: "";
-  position: absolute;
-  top: 50%;
-  width: 16px;
-  height: 16px;
-  margin-top: -8px;
-  border-radius: 9999px;
-  background:
-    radial-gradient(circle, #b9ffe9 0 2px, #4fd5b2 3px, rgba(79, 213, 178, 0.28) 7px, transparent 11px);
-  filter: blur(0.2px);
-  box-shadow: 0 0 22px rgba(79, 213, 178, 0.75);
-  opacity: 0.82;
-  animation: loading-electron-superposition 1.25s ease-in-out infinite;
+  display: none;
 }
 
 .loading-atom-ring::before {
@@ -153,8 +132,8 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 9999px;
-  background: #4fd5b2;
-  box-shadow: 0 0 20px rgba(79, 213, 178, 0.95);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 0 14px rgba(255, 255, 255, 0.28);
 }
 
 .loading-orbit-outer {
@@ -181,7 +160,7 @@ body {
   position: absolute;
   inset: 18px;
   border-radius: 9999px;
-  background: conic-gradient(from 90deg, transparent 0deg, rgba(79, 213, 178, 0.28) 70deg, transparent 130deg);
+  background: conic-gradient(from 90deg, transparent 0deg, rgba(255, 255, 255, 0.12) 70deg, transparent 130deg);
   filter: blur(0.2px);
   animation: loading-orbit 2.4s linear infinite;
 }
@@ -194,8 +173,8 @@ body {
   position: relative;
   width: 100%;
   overflow: hidden;
-  background: rgba(79, 213, 178, 0.12);
-  box-shadow: inset 0 0 0 1px rgba(79, 213, 178, 0.08);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
 }
 
 .loading-progress::before {
@@ -204,8 +183,8 @@ body {
   inset: 0 auto 0 0;
   width: 42%;
   border-radius: inherit;
-  background: linear-gradient(90deg, transparent, #4fd5b2 42%, #b9ffe9 50%, #4fd5b2 58%, transparent);
-  box-shadow: 0 0 18px rgba(79, 213, 178, 0.7);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.58) 45%, #ffffff 50%, rgba(255, 255, 255, 0.58) 55%, transparent);
+  box-shadow: 0 0 14px rgba(255, 255, 255, 0.22);
   animation: loading-progress 1.35s linear infinite;
   will-change: transform;
 }
@@ -311,12 +290,12 @@ body {
   0%,
   100% {
     opacity: 0.58;
-    filter: drop-shadow(0 0 4px rgba(79, 213, 178, 0.22));
+    filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.08));
   }
 
   45% {
-    opacity: 0.92;
-    filter: drop-shadow(0 0 12px rgba(79, 213, 178, 0.42));
+    opacity: 0.78;
+    filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.14));
   }
 }
 

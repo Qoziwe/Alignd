@@ -93,6 +93,7 @@ type AnalysisResponse = {
   }>;
   createdAt: string;
   analysisModel?: string;
+  niche?: string;
   cached: boolean;
 };
 
@@ -142,15 +143,6 @@ function extractErrorMessage(payload: unknown, fallback: string) {
       ? (payload as {error: string}).error
       : fallback;
 
-  const details = (payload as {details?: unknown}).details;
-  if (typeof details === 'string' && details.trim()) {
-    return `${error} ${details}`.trim();
-  }
-
-  if (details && typeof details === 'object' && 'message' in details && typeof details.message === 'string') {
-    return `${error} ${details.message}`.trim();
-  }
-
   return error;
 }
 
@@ -196,7 +188,7 @@ function AnalysisPreloader() {
       <LoadingAtom />
 
       <div className="mt-2 inline-flex min-h-[42px] items-center gap-3 rounded-full border border-white/12 bg-white/6 px-5 text-[14px] font-semibold text-gray-200">
-        <span className="h-2 w-2 rounded-full bg-[#4FD5B2] shadow-[0_0_12px_rgba(79,213,178,0.9)]"></span>
+        <span className="h-2 w-2 rounded-full bg-white/55"></span>
         Анализ профиля запущен
       </div>
 
@@ -218,7 +210,7 @@ function AnalysisPreloader() {
           ['03', 'Идеи', 'Тренды и хуки'],
         ].map(([step, title, description]) => (
           <div key={step} className="rounded-[16px] border border-white/10 bg-[#15151A] px-5 py-4">
-            <div className="text-[12px] font-black text-[#4FD5B2]">{step}</div>
+            <div className="text-[12px] font-black text-gray-300">{step}</div>
             <div className="mt-2 text-[16px] font-bold text-white">{title}</div>
             <div className="mt-1 text-[13px] text-gray-500">{description}</div>
           </div>
@@ -271,6 +263,7 @@ export default function App() {
   const secondaryIdeas = report?.analysis.ideas.slice(1) || [];
   const displayUsername = report?.account.username || extractUsername(url);
   const displayNiche =
+    report?.niche ||
     report?.analysis.profileSummary.niche ||
     report?.account.niche ||
     niche ||
@@ -310,7 +303,7 @@ export default function App() {
       const payload = await fetchJson<AnalysisResponse>(`${API_BASE_URL}/analyses/${analysisId}`);
       setReport(payload);
       setUrl(payload.account.profileUrl || '');
-      setNiche(payload.analysis.profileSummary.niche || payload.account.niche || '');
+      setNiche(payload.niche || payload.analysis.profileSummary.niche || payload.account.niche || '');
       setScreen('results');
       setPreloaderMode(null);
     } catch (error) {
@@ -529,7 +522,7 @@ export default function App() {
             </div>
 
             <div className="mt-2 inline-flex min-h-[42px] items-center gap-3 rounded-full border border-white/12 bg-white/6 px-5 text-[14px] font-semibold text-gray-200">
-              <span className="h-2 w-2 rounded-full bg-[#4FD5B2] shadow-[0_0_12px_rgba(79,213,178,0.9)]"></span>
+              <span className="h-2 w-2 rounded-full bg-white/55"></span>
               Анализ профиля запущен
             </div>
 
@@ -541,7 +534,7 @@ export default function App() {
             </p>
 
             <div className="mt-10 w-full max-w-[640px] overflow-hidden rounded-full border border-white/10 bg-white/8 p-1">
-              <div className="loading-progress h-[8px] rounded-full bg-[#4FD5B2]"></div>
+              <div className="loading-progress h-[8px] rounded-full bg-white/10"></div>
             </div>
           </div>
         </div>
@@ -864,7 +857,7 @@ export default function App() {
               <article className="rounded-[16px] border border-white/10 bg-[#15151A] p-5 sm:p-6">
                 <div className="flex items-center justify-between gap-4">
                   <div className="text-[14px] font-semibold text-gray-400">Всего анализов</div>
-                  <BarChart3 size={20} className="text-[#49CFAF]" />
+                  <BarChart3 size={20} className="text-gray-300" />
                 </div>
                 <div className="mt-4 text-[32px] font-black tracking-[0] text-white sm:mt-5 sm:text-[36px]">{history.length}</div>
               </article>
@@ -872,7 +865,7 @@ export default function App() {
               <article className="rounded-[16px] border border-white/10 bg-[#15151A] p-5 sm:p-6">
                 <div className="flex items-center justify-between gap-4">
                   <div className="text-[14px] font-semibold text-gray-400">Средняя совместимость</div>
-                  <TrendingUp size={20} className="text-[#49CFAF]" />
+                  <TrendingUp size={20} className="text-gray-300" />
                 </div>
                 <div className="mt-4 text-[32px] font-black tracking-[0] text-white sm:mt-5 sm:text-[36px]">
                   {averageCompatibility ? `${averageCompatibility}%` : '—'}
@@ -882,7 +875,7 @@ export default function App() {
               <article className="rounded-[16px] border border-white/10 bg-[#15151A] p-5 sm:p-6">
                 <div className="flex items-center justify-between gap-4">
                   <div className="text-[14px] font-semibold text-gray-400">Последний отчет</div>
-                  <CalendarDays size={20} className="text-[#49CFAF]" />
+                  <CalendarDays size={20} className="text-gray-300" />
                 </div>
                 <div className="mt-4 text-[22px] font-black tracking-[0] text-white sm:mt-5 sm:text-[24px]">{latestAnalysisDate}</div>
               </article>
@@ -904,7 +897,7 @@ export default function App() {
               )}
 
               {profileMessage && (
-                <div className="mt-5 rounded-2xl border border-[#1E4D37] bg-[rgba(30,77,55,0.22)] px-5 py-4 text-[15px] text-[#BFF5DD]">
+                <div className="mt-5 rounded-2xl border border-white/12 bg-white/6 px-5 py-4 text-[15px] text-gray-200">
                   {profileMessage}
                 </div>
               )}
@@ -974,7 +967,7 @@ export default function App() {
             </div>
 
             <div className="mt-2 inline-flex min-h-[42px] items-center gap-3 rounded-full border border-white/12 bg-white/6 px-5 text-[14px] font-semibold text-gray-200">
-              <span className="h-2 w-2 rounded-full bg-[#4FD5B2] shadow-[0_0_12px_rgba(79,213,178,0.9)]"></span>
+              <span className="h-2 w-2 rounded-full bg-white/55"></span>
               Анализ профиля запущен
             </div>
 
@@ -986,7 +979,7 @@ export default function App() {
             </p>
 
             <div className="mt-10 w-full max-w-[640px] overflow-hidden rounded-full border border-white/10 bg-white/8 p-1">
-              <div className="loading-progress h-[8px] rounded-full bg-[#4FD5B2]"></div>
+              <div className="loading-progress h-[8px] rounded-full bg-white/10"></div>
             </div>
 
             <div className="mt-8 grid w-full max-w-[780px] grid-cols-1 gap-3 text-left sm:grid-cols-3">
@@ -996,7 +989,7 @@ export default function App() {
                 ['03', 'Идеи', 'Тренды и хуки'],
               ].map(([step, title, description]) => (
                 <div key={step} className="rounded-[16px] border border-white/10 bg-[#15151A] px-5 py-4">
-                  <div className="text-[12px] font-black text-[#4FD5B2]">{step}</div>
+                  <div className="text-[12px] font-black text-gray-300">{step}</div>
                   <div className="mt-2 text-[16px] font-bold text-white">{title}</div>
                   <div className="mt-1 text-[13px] text-gray-500">{description}</div>
                 </div>
@@ -1017,7 +1010,7 @@ export default function App() {
               </button>
 
               <div className="flex min-h-[48px] w-full flex-wrap items-center gap-3 rounded-2xl border border-white/24 bg-[rgba(28,28,34,0.78)] px-4 py-3 text-[14px] font-medium leading-[1.35] text-gray-200 shadow-[0_10px_30px_rgba(0,0,0,0.25)] sm:min-h-[58px] sm:w-fit sm:rounded-full sm:px-5 sm:py-0 sm:text-[16px]">
-                <span className="h-2 w-2 rounded-full bg-[#4FD5B2] shadow-[0_0_10px_rgba(79,213,178,0.9)]"></span>
+                <span className="h-2 w-2 rounded-full bg-white/55"></span>
                 {report.cached ? 'Результат из сохранённого анализа' : 'Персональный анализ готов'}
               </div>
             </div>
@@ -1098,7 +1091,7 @@ export default function App() {
                   >
                     <div
                       className={`inline-flex h-[36px] w-fit items-center gap-2 rounded-[14px] px-4 text-[12px] font-black uppercase tracking-[0] sm:h-[38px] sm:text-[13px] ${
-                        trend.type === 'top' ? 'bg-[#5B2730] text-[#FF4C64]' : 'bg-[#1E4D37] text-[#4CC287]'
+                        trend.type === 'top' ? 'bg-[#5B2730] text-[#FF4C64]' : 'bg-white/8 text-gray-200'
                       }`}
                     >
                       {trend.type === 'top' ? <Flame size={16} strokeWidth={2.4} /> : <TrendingUp size={16} strokeWidth={2.4} />}
@@ -1109,9 +1102,9 @@ export default function App() {
                       <p className="mt-3 max-w-[400px] text-[15px] leading-[1.4] text-gray-200 sm:mt-4 sm:text-[17px] sm:leading-[1.3]">{trend.description}</p>
                     </div>
                     <div className="mt-auto pt-7 sm:pt-9">
-                      <div className="mb-3 text-[14px] font-medium text-[#49CFAF]">{trend.match}% совпадение</div>
+                      <div className="mb-3 text-[14px] font-medium text-gray-300">{trend.match}% совпадение</div>
                       <div className="h-[3px] w-full rounded-full bg-white/18">
-                        <div className="h-[3px] rounded-full bg-[#49CFAF]" style={{width: `${trend.match}%`}}></div>
+                        <div className="h-[3px] rounded-full bg-white/70" style={{width: `${trend.match}%`}}></div>
                       </div>
                     </div>
                   </article>

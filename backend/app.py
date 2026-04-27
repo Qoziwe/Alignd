@@ -28,11 +28,14 @@ APIFY_RUN_SYNC_URL = "https://api.apify.com/v2/acts/{actor_id}/run-sync-get-data
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_GEMINI_TREND_MODEL = DEFAULT_GEMINI_MODEL
+DEFAULT_GEMINI_FALLBACK_MODELS = ("gemma-4-31b-it",)
+DEFAULT_GEMINI_TREND_FALLBACK_MODELS = ("gemini-2.5-flash-lite", "gemini-2.0-flash")
 DEFAULT_ANALYSIS_CACHE_TTL_MINUTES = 60
 DEFAULT_SESSION_TTL_HOURS = 24
 DEFAULT_ANALYSIS_LIMIT_PER_HOUR = 25
 DEFAULT_AUTH_LIMIT_PER_15_MIN = 10
 CACHE_SCHEMA_VERSION = "analysis-v2"
+RETRYABLE_GEMINI_STATUS_CODES = {429, 500, 502, 503, 504}
 INSTAGRAM_HOSTS = {"instagram.com", "www.instagram.com", "m.instagram.com"}
 TIKTOK_HOSTS = {"tiktok.com", "www.tiktok.com", "m.tiktok.com"}
 RESERVED_INSTAGRAM_PATHS = {"p", "reel", "reels", "stories", "explore", "accounts"}
@@ -136,6 +139,10 @@ def parse_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def parse_csv(value: Any) -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
 def clamp_score(value: Any, default: int = 0) -> int:
@@ -305,6 +312,8 @@ class AppConfig:
     gemini_api_key: str | None
     gemini_model: str
     gemini_trend_model: str
+    gemini_fallback_models: list[str]
+    gemini_trend_fallback_models: list[str]
     analysis_cache_ttl_minutes: int
     session_ttl_hours: int
     analysis_limit_per_hour: int
@@ -354,6 +363,14 @@ class AppConfig:
                 or source.get("GEMINI_MODEL")
                 or DEFAULT_GEMINI_TREND_MODEL
             ).strip(),
+            gemini_fallback_models=parse_csv(
+                source.get("GEMINI_FALLBACK_MODELS")
+                or ",".join(DEFAULT_GEMINI_FALLBACK_MODELS)
+            ),
+            gemini_trend_fallback_models=parse_csv(
+                source.get("GEMINI_TREND_FALLBACK_MODELS")
+                or ",".join(DEFAULT_GEMINI_TREND_FALLBACK_MODELS)
+            ),
             analysis_cache_ttl_minutes=parse_int(
                 source.get("ANALYSIS_CACHE_TTL_MINUTES"), DEFAULT_ANALYSIS_CACHE_TTL_MINUTES
             ),
@@ -757,7 +774,7 @@ def clear_session_cookie(response):
 
 def json_error(message: str, status_code: int, details: Any | None = None):
     payload: dict[str, Any] = {"error": message}
-    if details is not None:
+    if details is not None and status_code < 500:
         payload["details"] = details
     return jsonify(payload), status_code
 
@@ -1014,11 +1031,16 @@ def build_apify_url(actor_id: str) -> str:
     return f"{APIFY_RUN_SYNC_URL.format(actor_id=actor_id)}?{query_string}"
 
 
+def normalize_gemini_model_id(model: str | None) -> str:
+    normalized = str(model or "").strip()
+    return normalized.removeprefix("models/") or current_app.config["GEMINI_MODEL"]
+
+
 def build_gemini_url(model: str | None = None) -> str:
     api_key = current_app.config["GEMINI_API_KEY"]
     if not api_key:
         raise ApiError("GEMINI_API_KEY is not configured on the server.", 500)
-    model = model or current_app.config["GEMINI_MODEL"]
+    model = normalize_gemini_model_id(model)
     query_string = parse.urlencode({"key": api_key})
     return f"{GEMINI_BASE_URL.format(model=model)}?{query_string}"
 
@@ -1080,10 +1102,11 @@ def fetch_apify_items(profile_url: str, platform: str = "Instagram", username: s
 def build_trend_research_prompt(account: dict[str, Any], niche: str) -> str:
     platform = str(account.get("platform") or "social media")
     today = utc_now().date().isoformat()
+    requested_niche = niche.strip() or "the profile's current niche"
     prompt_payload = {
         "currentDate": today,
         "platform": platform,
-        "userProvidedNiche": niche,
+        "userProvidedNiche": requested_niche,
         "accountSignals": {
             "username": account.get("username"),
             "fullName": account.get("fullName"),
@@ -1095,14 +1118,17 @@ def build_trend_research_prompt(account: dict[str, Any], niche: str) -> str:
         },
         "researchGoal": (
             "Use Google Search grounding actively to find the freshest short-form video trends available today. "
-            "Prioritize TikTok, Instagram Reels, YouTube Shorts, creator economy/news, meme formats, audio formats, "
-            "editing patterns, hooks, and recurring content structures from the last 7-14 days. "
-            "Prefer current rising signals over evergreen advice. Adapt each trend to the account niche."
+            "The user's requested niche is the target niche and must not be replaced by the account's existing topic. "
+            f"Research current TikTok, Instagram Reels, YouTube Shorts, creator economy/news, meme formats, audio formats, "
+            f"editing patterns, hooks, and recurring content structures from the last 7-14 days for this target niche: {requested_niche}. "
+            "Use accountSignals only to judge applicability and adaptation difficulty for this specific account."
         ),
         "requirements": [
             "Return only valid JSON without markdown.",
             "Return exactly 8 trends.",
-            "Each trend must be current, specific, actionable, and useful for the analyzed profile.",
+            "Each trend must be current, specific, actionable, and relevant to userProvidedNiche.",
+            "Do not switch the target niche to the profile's detected topic even if the fit is poor.",
+            "If the account and userProvidedNiche mismatch, adaptation must honestly explain the mismatch and how hard it is to bridge.",
             "Use type 'top' for currently dominant trends and 'growing' for fast-rising trends.",
             "Include freshnessWindow, evidence, and adaptation for every trend.",
             "Each sourceUrls item must be a URL string. Use sources discovered via Google Search grounding when possible.",
@@ -1119,25 +1145,31 @@ def build_trend_research_prompt(account: dict[str, Any], niche: str) -> str:
 def build_analysis_prompt(account: dict[str, Any], niche: str, trend_research: dict[str, Any] | None = None) -> str:
     platform = str(account.get("platform") or "social media")
     today = utc_now().date().isoformat()
+    requested_niche = niche.strip() or "the profile's current niche"
     prompt_payload = {
         "currentDate": today,
         "account": account,
-        "userProvidedNiche": niche,
+        "userProvidedNiche": requested_niche,
         "freshTrendResearch": trend_research or {},
         "analysisGoal": (
-            f"Проанализируй {platform}-профиль, его позиционирование и контент-сигналы. "
-            "Сопоставь это с freshTrendResearch: выбери самые свежие, доказуемые и применимые тренды, "
+            f"Проанализируй {platform}-профиль, его позиционирование и контент-сигналы именно относительно userProvidedNiche. "
+            "Не заменяй userProvidedNiche темой профиля. Если профиль о другой теме, явно оцени несоответствие и снизь совместимость. "
+            "Сопоставь профиль с freshTrendResearch по userProvidedNiche: выбери самые свежие, доказуемые и применимые тренды, "
             f"которые работают на {today} для {platform}. "
             "Верни только валидный JSON на русском языке без markdown."
         ),
         "requirements": [
             "Profile summary must contain niche, compatibilityLabel, compatibilityScore, positioning, audienceSummary.",
+            "profileSummary.niche must exactly equal userProvidedNiche, not the detected account topic.",
+            "positioning and audienceSummary must explain fit or mismatch between the account and userProvidedNiche.",
             "Return exactly 4 trends.",
             "Return exactly 2 trends with type 'top' and 2 trends with type 'growing'.",
-            "Select the 4 report trends from freshTrendResearch unless there is a clear account-fit reason to exclude one.",
-            "Trend descriptions must explain why the trend is fresh now and how this profile can use it.",
+            "Select report trends from freshTrendResearch for userProvidedNiche unless there is a clear account-fit reason to exclude one.",
+            "Trend descriptions must explain why the trend is fresh now and whether this profile can credibly use it for userProvidedNiche.",
             "Return exactly 3 ideas.",
             "Return exactly 6 hooks.",
+            "Ideas, hooks, and recommendations must target userProvidedNiche, while honestly accounting for the account's current positioning.",
+            "If compatibilityScore is below 30, ideas must be repositioning/bridge experiments rather than pretending the account already fits the niche.",
             "Recommendations must contain summary and 5-8 bullets.",
             "compatibilityScore must be an integer from 0 to 100 without percent signs or text.",
             "Each trends[].match must be an integer from 0 to 100 without percent signs or text.",
@@ -1229,40 +1261,112 @@ def extract_grounding_sources(payload: dict[str, Any]) -> list[dict[str, str]]:
     return sources
 
 
-def call_gemini_generate(prompt: str, model: str, use_search_grounding: bool) -> dict[str, Any]:
+def build_gemini_attempts(primary_model: str, fallback_models: list[str] | None = None) -> list[str]:
+    attempts: list[str] = []
+    for model in [primary_model, *(fallback_models or [])]:
+        normalized = normalize_gemini_model_id(model)
+        if normalized and normalized not in attempts:
+            attempts.append(normalized)
+    return attempts
+
+
+def model_supports_search_grounding(model: str) -> bool:
+    return not normalize_gemini_model_id(model).startswith("gemma-")
+
+
+def build_gemini_payload(prompt: str, use_search_grounding: bool) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.45},
     }
     if use_search_grounding:
         payload["tools"] = [{"google_search": {}}]
+    return payload
 
+
+def request_gemini_generate(prompt: str, model: str, use_search_grounding: bool) -> dict[str, Any]:
     gemini_request = request.Request(
         build_gemini_url(model),
-        data=json.dumps(payload).encode("utf-8"),
+        data=json.dumps(build_gemini_payload(prompt, use_search_grounding)).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
 
-    try:
-        with request.urlopen(gemini_request, timeout=120) as response:
-            raw_body = response.read().decode("utf-8")
-            return json.loads(raw_body)
-    except error.HTTPError as exc:
-        raw_error = exc.read().decode("utf-8", errors="replace")
-        raise UpstreamServiceError(
-            "Unable to complete AI analysis.",
-            exc.code,
-            raw_error or "Gemini request failed.",
-        ) from exc
-    except error.URLError as exc:
-        raise UpstreamServiceError(
-            "AI analysis service is temporarily unavailable.",
-            502,
-            str(exc.reason),
-        ) from exc
-    except json.JSONDecodeError as exc:
-        raise UpstreamServiceError("AI analysis service returned invalid JSON.", 502) from exc
+    with request.urlopen(gemini_request, timeout=120) as response:
+        raw_body = response.read().decode("utf-8")
+        return json.loads(raw_body)
+
+
+def gemini_error_message(status_code: int, fallback_was_attempted: bool) -> str:
+    if status_code in {429, 503}:
+        if fallback_was_attempted:
+            return "AI-сервис сейчас перегружен, резервная модель тоже не ответила. Попробуйте через пару минут."
+        return "AI-сервис сейчас перегружен. Попробуйте повторить анализ через пару минут."
+    return "Не удалось завершить AI-анализ. Попробуйте позже."
+
+
+def call_gemini_generate(
+    prompt: str,
+    model: str,
+    use_search_grounding: bool,
+    fallback_models: list[str] | None = None,
+) -> tuple[dict[str, Any], str]:
+    attempts = build_gemini_attempts(model, fallback_models)
+    fallback_was_attempted = len(attempts) > 1
+    last_http_error: tuple[int, str] | None = None
+
+    for index, attempted_model in enumerate(attempts):
+        attempted_grounding = use_search_grounding and model_supports_search_grounding(attempted_model)
+
+        try:
+            return request_gemini_generate(prompt, attempted_model, attempted_grounding), attempted_model
+        except error.HTTPError as exc:
+            raw_error = exc.read().decode("utf-8", errors="replace")
+            last_http_error = (exc.code, raw_error or "Gemini request failed.")
+            can_try_fallback = exc.code in RETRYABLE_GEMINI_STATUS_CODES and index < len(attempts) - 1
+            if can_try_fallback:
+                current_app.logger.warning(
+                    "Gemini model %s failed with HTTP %s. Trying fallback model %s.",
+                    attempted_model,
+                    exc.code,
+                    attempts[index + 1],
+                )
+                continue
+
+            raise UpstreamServiceError(
+                gemini_error_message(exc.code, fallback_was_attempted),
+                exc.code,
+                raw_error or "Gemini request failed.",
+            ) from exc
+        except error.URLError as exc:
+            can_try_fallback = index < len(attempts) - 1
+            if can_try_fallback:
+                current_app.logger.warning(
+                    "Gemini model %s is unavailable. Trying fallback model %s.",
+                    attempted_model,
+                    attempts[index + 1],
+                )
+                continue
+
+            raise UpstreamServiceError(
+                "AI-сервис временно недоступен. Попробуйте позже.",
+                502,
+                str(exc.reason),
+            ) from exc
+        except json.JSONDecodeError as exc:
+            can_try_fallback = index < len(attempts) - 1
+            if can_try_fallback:
+                current_app.logger.warning(
+                    "Gemini model %s returned invalid JSON. Trying fallback model %s.",
+                    attempted_model,
+                    attempts[index + 1],
+                )
+                continue
+
+            raise UpstreamServiceError("AI-сервис вернул некорректный ответ. Попробуйте ещё раз.", 502) from exc
+
+    status_code, raw_error = last_http_error or (502, "Gemini request failed.")
+    raise UpstreamServiceError(gemini_error_message(status_code, fallback_was_attempted), status_code, raw_error)
 
 
 def normalize_trend_research(research_payload: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]]]:
@@ -1317,17 +1421,18 @@ def research_fresh_trends(account: dict[str, Any], niche: str) -> tuple[dict[str
     if not current_app.config["ENABLE_SEARCH_GROUNDING"]:
         return {"trends": [], "researchSummary": "", "researchedAt": iso_now()}, []
 
-    response_payload = call_gemini_generate(
+    response_payload, _model_used = call_gemini_generate(
         build_trend_research_prompt(account, niche),
         current_app.config["GEMINI_TREND_MODEL"],
         True,
+        current_app.config["GEMINI_TREND_FALLBACK_MODELS"],
     )
     research_payload = parse_json_response_text(extract_text_parts(response_payload))
     research, explicit_sources = normalize_trend_research(research_payload)
     return research, merge_sources(extract_grounding_sources(response_payload), explicit_sources)
 
 
-def ensure_analysis_shape(analysis: dict[str, Any]) -> dict[str, Any]:
+def ensure_analysis_shape(analysis: dict[str, Any], requested_niche: str = "") -> dict[str, Any]:
     required_profile_keys = {
         "niche",
         "compatibilityLabel",
@@ -1363,10 +1468,11 @@ def ensure_analysis_shape(analysis: dict[str, Any]) -> dict[str, Any]:
         profile_summary.get("compatibilityLabel"),
         normalized_trends,
     )
+    final_niche = requested_niche.strip() or str(profile_summary["niche"])
 
     return {
         "profileSummary": {
-            "niche": str(profile_summary["niche"]),
+            "niche": final_niche,
             "compatibilityLabel": str(profile_summary["compatibilityLabel"]),
             "compatibilityScore": compatibility_score,
             "positioning": str(profile_summary["positioning"]),
@@ -1392,18 +1498,19 @@ def ensure_analysis_shape(analysis: dict[str, Any]) -> dict[str, Any]:
 
 def generate_analysis(account: dict[str, Any], niche: str) -> tuple[dict[str, Any], list[dict[str, str]], str]:
     trend_research, trend_sources = research_fresh_trends(account, niche)
-    response_payload = call_gemini_generate(
+    response_payload, analysis_model = call_gemini_generate(
         build_analysis_prompt(account, niche, trend_research),
         current_app.config["GEMINI_MODEL"],
         current_app.config["ENABLE_SEARCH_GROUNDING"],
+        current_app.config["GEMINI_FALLBACK_MODELS"],
     )
 
     analysis_payload = parse_json_response_text(extract_text_parts(response_payload))
     if "account" not in analysis_payload:
         analysis_payload["account"] = account
-    analysis = ensure_analysis_shape(analysis_payload)
+    analysis = ensure_analysis_shape(analysis_payload, niche)
     sources = merge_sources(trend_sources, extract_grounding_sources(response_payload))
-    return analysis, sources, current_app.config["GEMINI_MODEL"]
+    return analysis, sources, analysis_model
 
 
 def build_cache_key(user_id: str, profile_url: str, niche: str) -> str:
@@ -1496,7 +1603,7 @@ def get_recent_analyses(user_id: str) -> list[dict[str, Any]]:
                 "id": row["id"],
                 "profileUrl": row["profile_url"],
                 "username": account.get("username", ""),
-                "niche": analysis.get("profileSummary", {}).get("niche") or row["niche"],
+                "niche": row["niche"] or analysis.get("profileSummary", {}).get("niche", ""),
                 "compatibilityScore": analysis.get("profileSummary", {}).get("compatibilityScore"),
                 "createdAt": row["created_at"],
             }
@@ -1578,6 +1685,8 @@ def register_routes(app: Flask) -> None:
 
     @app.errorhandler(ApiError)
     def handle_api_error(exc: ApiError):
+        if exc.details is not None and exc.status_code >= 500:
+            current_app.logger.warning("API error details hidden from client: %s", exc.details)
         return json_error(exc.message, exc.status_code, exc.details)
 
     @app.errorhandler(Exception)
@@ -1758,6 +1867,8 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
         GEMINI_API_KEY=config.gemini_api_key,
         GEMINI_MODEL=config.gemini_model,
         GEMINI_TREND_MODEL=config.gemini_trend_model,
+        GEMINI_FALLBACK_MODELS=config.gemini_fallback_models,
+        GEMINI_TREND_FALLBACK_MODELS=config.gemini_trend_fallback_models,
         ANALYSIS_CACHE_TTL_MINUTES=config.analysis_cache_ttl_minutes,
         SESSION_TTL_HOURS=config.session_ttl_hours,
         ANALYSIS_LIMIT_PER_HOUR=config.analysis_limit_per_hour,
