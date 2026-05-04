@@ -24,7 +24,7 @@ Alignd takes an Instagram or TikTok profile URL, fetches profile data through Ap
 ```mermaid
 flowchart LR
     U[User] --> F[Frontend<br/>React + Vite]
-    F -->|Auth / Analysis Requests| B[Backend API<br/>Flask + Waitress]
+    F -->|Auth / Analysis Requests| B[Backend API<br/>Flask + Socket.IO]
     B -->|Read / Write| DB[(PostgreSQL)]
     B -->|Profile Fetch| A[Apify Instagram / TikTok Scrapers]
     B -->|Fresh Trend Research| GT[Gemini + Google Search]
@@ -68,6 +68,7 @@ sequenceDiagram
 | Storage | PostgreSQL-ready database layer, saved analysis history |
 | Security | Rate limiting, CORS control, session tokens, security headers |
 | Analysis | Apify parsing + fresh trend research + Gemini structured output |
+| Admin | `/adminpanel`, global analytics, filters, logs, and realtime Socket.IO updates |
 | Frontend | Auth flow, real API errors, saved report navigation |
 | Operations | Health check, readiness check, production entrypoint |
 | Testing | Backend unit/integration tests, frontend utility tests |
@@ -117,6 +118,11 @@ SESSION_TTL_HOURS=24
 ANALYSIS_CACHE_TTL_MINUTES=60
 ANALYSIS_LIMIT_PER_HOUR=25
 AUTH_LIMIT_PER_15_MINUTES=10
+ADMIN_USERNAME=Lekim
+# Local development may use plaintext. Production must use ADMIN_PASSWORD_HASH.
+ADMIN_PASSWORD=replace_with_local_admin_password
+ADMIN_ALLOW_LOCAL_ORIGINS=true
+ADMIN_SESSION_TTL_HOURS=12
 ```
 
 ### 2. Frontend environment
@@ -148,6 +154,7 @@ npm run dev
 ```
 
 Open `http://127.0.0.1:3000`.
+Admin panel: `http://127.0.0.1:3000/adminpanel`.
 
 ## Test and build commands
 
@@ -182,7 +189,7 @@ If your host uses `/var/www` instead, replace `/www` with `/var/www`.
 flowchart TD
     Internet --> N[Nginx]
     N -->|Static files| FE[/www/alignd/frontend/dist]
-    N -->|/api/* reverse proxy| BE[Waitress on 127.0.0.1:5000]
+    N -->|/api/* + WebSocket reverse proxy| BE[Backend on 127.0.0.1:5000]
     BE --> PG[(PostgreSQL)]
     BE --> AP[Apify]
     BE --> GM[Gemini]
@@ -245,6 +252,12 @@ cp .env.example .env
 
 Edit `/www/alignd/backend/.env`:
 
+Generate the admin password hash before filling `ADMIN_PASSWORD_HASH`:
+
+```bash
+python -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('your-admin-password'))"
+```
+
 ```env
 APP_ENV=production
 HOST=127.0.0.1
@@ -264,6 +277,10 @@ SESSION_TTL_HOURS=24
 ANALYSIS_CACHE_TTL_MINUTES=60
 ANALYSIS_LIMIT_PER_HOUR=25
 AUTH_LIMIT_PER_15_MINUTES=10
+ADMIN_USERNAME=replace_with_admin_username
+ADMIN_PASSWORD_HASH=replace_with_admin_password_hash
+ADMIN_ALLOW_LOCAL_ORIGINS=false
+ADMIN_SESSION_TTL_HOURS=12
 ```
 
 Quick backend smoke test:
@@ -271,7 +288,7 @@ Quick backend smoke test:
 ```bash
 source /www/alignd/backend/venv/bin/activate
 cd /www/alignd/backend
-python serve.py
+gunicorn --worker-class eventlet -w 1 --bind 127.0.0.1:5000 app:app
 ```
 
 If it starts correctly, stop it with `Ctrl+C`.
@@ -311,7 +328,7 @@ User=www-data
 Group=www-data
 WorkingDirectory=/www/alignd/backend
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/www/alignd/backend/venv/bin/python serve.py
+ExecStart=/www/alignd/backend/venv/bin/gunicorn --worker-class eventlet -w 1 --bind 127.0.0.1:5000 app:app
 Restart=always
 RestartSec=5
 
@@ -348,6 +365,17 @@ server {
     location /api/ {
         proxy_pass http://127.0.0.1:5000/;
         proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/socket.io/ {
+        proxy_pass http://127.0.0.1:5000/socket.io/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -403,6 +431,7 @@ Then verify manually in the browser:
 2. Register a new user.
 3. Run one analysis.
 4. Open the saved report from the recent analyses section.
+5. Open `/adminpanel`, login as `Lekim`, and verify the analysis appears live.
 
 ## Update workflow on the server
 

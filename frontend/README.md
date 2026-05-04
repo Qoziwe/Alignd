@@ -1,6 +1,6 @@
 # Frontend
 
-React + Vite client for Alignd. This application handles authentication screens, analysis form submission, result rendering, and navigation through saved reports.
+React + Vite client for Alignd. This application handles authentication screens, analysis form submission, result rendering, and navigation through saved reports. The admin panel is served by the same bundle at `/adminpanel`.
 
 ## Responsibilities
 
@@ -10,6 +10,7 @@ React + Vite client for Alignd. This application handles authentication screens,
 - error rendering from the real API
 - recent analyses list
 - reopening saved reports
+- admin dashboard at `/adminpanel` with filters, analytics, logs, and Socket.IO realtime updates
 
 ## UI flow
 
@@ -74,6 +75,7 @@ That folder should be served by Nginx or another static file server.
 - Set `VITE_API_URL` before running `npm run build`
 - Rebuild the frontend after every environment change
 - If you deploy frontend and backend on the same domain, prefer `/api` proxying through Nginx
+- Proxy Socket.IO traffic for the admin panel as well (`/socket.io/`, or `/api/socket.io/` when using the Vite `/api` proxy)
 - If the app loads but API requests fail, verify the built frontend points to the correct API base URL
 
 For the full server deployment guide, see the root [README](../README.md).

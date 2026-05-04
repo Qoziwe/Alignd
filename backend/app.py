@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import ipaddress
 import json
 import logging
 import os
@@ -8,6 +10,7 @@ import re
 import secrets
 import sqlite3
 import uuid
+from collections import Counter, defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -20,6 +23,12 @@ from urllib.parse import urlparse
 from flask import Flask, current_app, g, jsonify, request as flask_request
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
+
+try:
+    from flask_socketio import SocketIO, emit
+except ModuleNotFoundError:
+    SocketIO = None
+    emit = None
 
 
 DEFAULT_APIFY_INSTAGRAM_ACTOR_ID = "apify~instagram-scraper"
@@ -34,6 +43,7 @@ DEFAULT_ANALYSIS_CACHE_TTL_MINUTES = 60
 DEFAULT_SESSION_TTL_HOURS = 24
 DEFAULT_ANALYSIS_LIMIT_PER_HOUR = 25
 DEFAULT_AUTH_LIMIT_PER_15_MIN = 10
+DEFAULT_ADMIN_SESSION_TTL_HOURS = 12
 CACHE_SCHEMA_VERSION = "analysis-v2"
 RETRYABLE_GEMINI_STATUS_CODES = {429, 500, 502, 503, 504}
 INSTAGRAM_HOSTS = {"instagram.com", "www.instagram.com", "m.instagram.com"}
@@ -300,6 +310,34 @@ def build_allowed_origins(raw_value: str) -> set[str]:
     return expanded_origins
 
 
+def is_local_development_origin(origin: str) -> bool:
+    try:
+        parsed = urlparse(origin)
+    except ValueError:
+        return False
+
+    if parsed.scheme not in {"http", "https"}:
+        return False
+
+    hostname = (parsed.hostname or "").strip().lower()
+    if hostname in {"localhost", "::1"}:
+        return True
+
+    try:
+        ip_address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+
+    return ip_address.is_loopback or ip_address.is_private or ip_address.is_link_local
+
+
+def is_allowed_frontend_origin(origin: str) -> bool:
+    normalized_origin = origin.rstrip("/")
+    if normalized_origin in build_allowed_origins(current_app.config["FRONTEND_ORIGIN"]):
+        return True
+    return bool(current_app.config.get("ADMIN_ALLOW_LOCAL_ORIGINS")) and is_local_development_origin(normalized_origin)
+
+
 @dataclass(slots=True)
 class AppConfig:
     app_env: str
@@ -318,6 +356,12 @@ class AppConfig:
     session_ttl_hours: int
     analysis_limit_per_hour: int
     auth_limit_per_15_min: int
+    admin_username: str
+    admin_password: str
+    admin_password_hash: str
+    admin_allow_local_origins: bool
+    admin_session_ttl_hours: int
+    admin_session_cookie_name: str
     port: int
     host: str
     debug: bool
@@ -337,18 +381,36 @@ class AppConfig:
             source.get("DATABASE_URL", "sqlite:///backend/data/alignd.db")
         ).strip()
         secret_key = str(source.get("SECRET_KEY", "dev-secret-change-me")).strip()
+        frontend_origin = str(source.get("FRONTEND_ORIGIN", "http://127.0.0.1:3000")).strip()
 
         if app_env == "production":
             if not database_url.startswith("postgresql://") and not database_url.startswith("postgres://"):
                 raise RuntimeError("Production requires PostgreSQL in DATABASE_URL.")
             if secret_key == "dev-secret-change-me":
                 raise RuntimeError("Set a strong SECRET_KEY in production.")
+            if not frontend_origin or "*" in frontend_origin:
+                raise RuntimeError("Set explicit FRONTEND_ORIGIN values in production.")
+
+        admin_username = str(source.get("ADMIN_USERNAME", "")).strip()
+        admin_password = str(source.get("ADMIN_PASSWORD", "")).strip()
+        admin_password_hash = str(source.get("ADMIN_PASSWORD_HASH", "")).strip()
+        admin_allow_local_origins = parse_bool(
+            source.get("ADMIN_ALLOW_LOCAL_ORIGINS"),
+            app_env != "production",
+        )
+        if app_env == "production":
+            if not admin_username:
+                raise RuntimeError("Set ADMIN_USERNAME in production.")
+            if not admin_password_hash:
+                raise RuntimeError("Set ADMIN_PASSWORD_HASH in production.")
+            if admin_password:
+                raise RuntimeError("Do not set plaintext ADMIN_PASSWORD in production. Use ADMIN_PASSWORD_HASH.")
 
         return cls(
             app_env=app_env,
             database_url=database_url,
             secret_key=secret_key,
-            frontend_origin=str(source.get("FRONTEND_ORIGIN", "http://127.0.0.1:3000")).strip(),
+            frontend_origin=frontend_origin,
             apify_token=(source.get("APIFY_TOKEN") or "").strip() or None,
             apify_instagram_actor_id=str(
                 source.get("APIFY_INSTAGRAM_ACTOR_ID", DEFAULT_APIFY_INSTAGRAM_ACTOR_ID)
@@ -383,6 +445,16 @@ class AppConfig:
             auth_limit_per_15_min=parse_int(
                 source.get("AUTH_LIMIT_PER_15_MINUTES"), DEFAULT_AUTH_LIMIT_PER_15_MIN
             ),
+            admin_username=admin_username,
+            admin_password=admin_password,
+            admin_password_hash=admin_password_hash,
+            admin_allow_local_origins=admin_allow_local_origins,
+            admin_session_ttl_hours=parse_int(
+                source.get("ADMIN_SESSION_TTL_HOURS"), DEFAULT_ADMIN_SESSION_TTL_HOURS
+            ),
+            admin_session_cookie_name=str(
+                source.get("ADMIN_SESSION_COOKIE_NAME", "alignd_admin_session")
+            ).strip(),
             port=parse_int(source.get("PORT"), 5000),
             host=str(source.get("HOST", "0.0.0.0")).strip(),
             debug=parse_bool(source.get("DEBUG"), app_env != "production"),
@@ -538,6 +610,24 @@ class Database:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS admin_sessions (
+                id TEXT PRIMARY KEY,
+                token_hash TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                last_used_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS admin_analysis_logs (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(run_id) REFERENCES analysis_runs(id) ON DELETE CASCADE
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS rate_limits (
                 scope TEXT NOT NULL,
                 subject TEXT NOT NULL,
@@ -550,6 +640,9 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON auth_sessions(user_id)",
             "CREATE INDEX IF NOT EXISTS idx_analysis_user_id_created_at ON analysis_runs(user_id, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_analysis_cache_key ON analysis_runs(cache_key)",
+            "CREATE INDEX IF NOT EXISTS idx_analysis_created_at ON analysis_runs(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_admin_sessions_token_hash ON admin_sessions(token_hash)",
+            "CREATE INDEX IF NOT EXISTS idx_admin_logs_run_id_created_at ON admin_analysis_logs(run_id, created_at DESC)",
         ]
 
         with self._lock:
@@ -770,6 +863,157 @@ def clear_session_cookie(response):
         secure=current_app.config["SESSION_COOKIE_SECURE"],
     )
     return response
+
+
+def build_admin_csrf_token(token_hash: str) -> str:
+    return hmac.new(
+        current_app.config["SECRET_KEY"].encode("utf-8"),
+        f"admin-csrf|{token_hash}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def admin_to_payload(session: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = {"username": current_app.config["ADMIN_USERNAME"]}
+    if session:
+        payload.update(
+            {
+                "sessionId": session["id"],
+                "createdAt": session["created_at"],
+                "expiresAt": session["expires_at"],
+                "csrfToken": build_admin_csrf_token(session["token_hash"]),
+            }
+        )
+    return payload
+
+
+def create_admin_session() -> str:
+    db = get_database()
+    token = secrets.token_urlsafe(32)
+    token_hash = hash_token(token)
+    now = utc_now()
+    expires_at = now + timedelta(hours=current_app.config["ADMIN_SESSION_TTL_HOURS"])
+
+    db.execute(
+        """
+        INSERT INTO admin_sessions (id, token_hash, created_at, expires_at, last_used_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (str(uuid.uuid4()), token_hash, now.isoformat(), expires_at.isoformat(), now.isoformat()),
+    )
+    return token
+
+
+def get_admin_token_from_request(required: bool = True) -> str:
+    cookie_token = flask_request.cookies.get(current_app.config["ADMIN_SESSION_COOKIE_NAME"], "").strip()
+    if cookie_token:
+        return cookie_token
+
+    if required:
+        raise ApiError("Admin authorization is required.", 401)
+    return ""
+
+
+def get_admin_session_from_token(token: str, touch: bool = True) -> dict[str, Any]:
+    if not token:
+        raise ApiError("Admin authorization is required.", 401)
+
+    token_hash = hash_token(token)
+    db = get_database()
+    session = db.fetch_one(
+        "SELECT * FROM admin_sessions WHERE token_hash = ?",
+        (token_hash,),
+    )
+    if not session:
+        raise ApiError("Admin session was not found.", 401)
+
+    expires_at = datetime.fromisoformat(session["expires_at"])
+    if expires_at <= utc_now():
+        db.execute("DELETE FROM admin_sessions WHERE token_hash = ?", (token_hash,))
+        raise ApiError("Admin session expired.", 401)
+
+    if touch:
+        db.execute(
+            "UPDATE admin_sessions SET last_used_at = ? WHERE token_hash = ?",
+            (iso_now(), token_hash),
+        )
+
+    return session
+
+
+def require_admin_csrf(session: dict[str, Any]) -> None:
+    require_admin_origin()
+    submitted_token = flask_request.headers.get("X-CSRF-Token", "").strip()
+    expected_token = build_admin_csrf_token(session["token_hash"])
+    if not submitted_token or not secrets.compare_digest(submitted_token, expected_token):
+        raise ApiError("Invalid admin CSRF token.", 403)
+
+
+def require_admin_origin() -> None:
+    if current_app.config.get("ADMIN_ALLOW_LOCAL_ORIGINS"):
+        return
+
+    origin = (flask_request.headers.get("Origin") or "").rstrip("/")
+    if not origin:
+        return
+    if not is_allowed_frontend_origin(origin):
+        raise ApiError("Admin request origin is not allowed.", 403)
+
+
+def get_current_admin(require_csrf: bool = False) -> dict[str, Any]:
+    if getattr(g, "current_admin", None):
+        session = g.current_admin
+    else:
+        token = get_admin_token_from_request()
+        session = get_admin_session_from_token(token)
+        g.current_admin = session
+        g.current_admin_token_hash = hash_token(token)
+
+    if require_csrf:
+        require_admin_csrf(session)
+    return session
+
+
+def logout_current_admin() -> None:
+    token_hash = getattr(g, "current_admin_token_hash", None)
+    if token_hash:
+        get_database().execute("DELETE FROM admin_sessions WHERE token_hash = ?", (token_hash,))
+
+
+def attach_admin_session_cookie(response, token: str):
+    response.set_cookie(
+        current_app.config["ADMIN_SESSION_COOKIE_NAME"],
+        token,
+        max_age=current_app.config["ADMIN_SESSION_TTL_HOURS"] * 60 * 60,
+        httponly=True,
+        secure=current_app.config["SESSION_COOKIE_SECURE"],
+        samesite=current_app.config["SESSION_COOKIE_SAMESITE"],
+        path="/",
+    )
+    return response
+
+
+def clear_admin_session_cookie(response):
+    response.delete_cookie(
+        current_app.config["ADMIN_SESSION_COOKIE_NAME"],
+        path="/",
+        samesite=current_app.config["SESSION_COOKIE_SAMESITE"],
+        secure=current_app.config["SESSION_COOKIE_SECURE"],
+    )
+    return response
+
+
+def verify_admin_credentials(username: str, password: str) -> bool:
+    expected_username = current_app.config["ADMIN_USERNAME"]
+    if not expected_username or not secrets.compare_digest(username.strip(), expected_username):
+        return False
+
+    password_hash = current_app.config["ADMIN_PASSWORD_HASH"]
+    if password_hash:
+        return check_password_hash(password_hash, password)
+
+    expected_password = current_app.config["ADMIN_PASSWORD"]
+    return bool(expected_password) and secrets.compare_digest(password, expected_password)
 
 
 def json_error(message: str, status_code: int, details: Any | None = None):
@@ -1199,18 +1443,41 @@ def extract_text_parts(payload: dict[str, Any]) -> str:
     return text
 
 
-def parse_json_response_text(text: str) -> dict[str, Any]:
+def strip_json_code_fence(text: str) -> str:
     cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:]
-        cleaned = cleaned.strip()
+    fence_match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.IGNORECASE | re.DOTALL)
+    if fence_match:
+        return fence_match.group(1).strip()
+    return cleaned
+
+
+def extract_json_object(text: str) -> dict[str, Any]:
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(text):
+        if character != "{":
+            continue
+
+        try:
+            payload, _end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+
+        if isinstance(payload, dict):
+            return payload
+
+    raise json.JSONDecodeError("No JSON object found", text, 0)
+
+
+def parse_json_response_text(text: str) -> dict[str, Any]:
+    cleaned = strip_json_code_fence(text)
 
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        raise UpstreamServiceError("AI returned an invalid JSON payload.", 502) from exc
+        try:
+            return extract_json_object(cleaned)
+        except json.JSONDecodeError:
+            raise UpstreamServiceError("AI returned an invalid JSON payload.", 502) from exc
 
 
 def source_from_url(url: Any) -> dict[str, str] | None:
@@ -1579,6 +1846,10 @@ def save_analysis(
             build_cache_key(user_id, profile_url, niche),
         ),
     )
+    admin_payload = get_admin_analysis_detail(run_id)
+    if admin_payload:
+        emit_admin_realtime("analysis_created", admin_payload)
+        emit_admin_realtime("snapshot", build_admin_overview())
     return run_id
 
 
@@ -1619,6 +1890,12 @@ def delete_user_analyses(user_id: str) -> int:
     )
     deleted_count = int(row["total"]) if row else 0
     db.execute("DELETE FROM analysis_runs WHERE user_id = ?", (user_id,))
+    if deleted_count:
+        emit_admin_realtime(
+            "analyses_deleted",
+            {"userId": user_id, "deletedCount": deleted_count, "createdAt": iso_now()},
+        )
+        emit_admin_realtime("snapshot", build_admin_overview())
     return deleted_count
 
 
@@ -1648,6 +1925,506 @@ def get_analysis_run(user_id: str, run_id: str) -> dict[str, Any] | None:
     }
 
 
+def safe_json_loads(raw_value: Any, fallback: Any) -> Any:
+    try:
+        return json.loads(raw_value) if raw_value else fallback
+    except (TypeError, json.JSONDecodeError):
+        return fallback
+
+
+def as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def numeric_value(value: Any) -> int:
+    parsed = to_int(value)
+    return parsed if parsed is not None else 0
+
+
+def parse_datetime(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def row_created_at(row_or_item: dict[str, Any]) -> datetime:
+    parsed = parse_datetime(row_or_item.get("created_at") or row_or_item.get("createdAt"))
+    return parsed or datetime.fromtimestamp(0, timezone.utc)
+
+
+def source_label(source: dict[str, Any]) -> str:
+    title = str(source.get("title") or "").strip()
+    url = str(source.get("url") or "").strip()
+    if title:
+        return title[:120]
+    try:
+        return urlparse(url).hostname or url
+    except ValueError:
+        return url[:120] or "Unknown source"
+
+
+def fetch_admin_analysis_rows() -> list[dict[str, Any]]:
+    return get_database().fetch_all(
+        """
+        SELECT
+            analysis_runs.id,
+            analysis_runs.user_id,
+            analysis_runs.profile_url,
+            analysis_runs.niche,
+            analysis_runs.account_payload,
+            analysis_runs.analysis_payload,
+            analysis_runs.sources_payload,
+            analysis_runs.created_at,
+            analysis_runs.cache_key,
+            users.email AS user_email,
+            users.display_name AS user_display_name,
+            users.created_at AS user_created_at
+        FROM analysis_runs
+        JOIN users ON users.id = analysis_runs.user_id
+        ORDER BY analysis_runs.created_at DESC
+        """
+    )
+
+
+def admin_logs_by_run_ids(run_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    if not run_ids:
+        return {}
+
+    placeholders = ", ".join("?" for _ in run_ids)
+    rows = get_database().fetch_all(
+        f"""
+        SELECT id, run_id, message, created_at
+        FROM admin_analysis_logs
+        WHERE run_id IN ({placeholders})
+        ORDER BY created_at DESC
+        """,
+        tuple(run_ids),
+    )
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[row["run_id"]].append(
+            {
+                "id": row["id"],
+                "runId": row["run_id"],
+                "message": row["message"],
+                "createdAt": row["created_at"],
+            }
+        )
+    return grouped
+
+
+def admin_analysis_to_payload(
+    row: dict[str, Any],
+    include_payload: bool = False,
+    logs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    account = as_dict(safe_json_loads(row.get("account_payload"), {}))
+    analysis = as_dict(safe_json_loads(row.get("analysis_payload"), {}))
+    sources = as_list(safe_json_loads(row.get("sources_payload"), []))
+    profile_summary = as_dict(analysis.get("profileSummary"))
+    recommendations = as_dict(analysis.get("recommendations"))
+    trends = as_list(analysis.get("trends"))
+    ideas = as_list(analysis.get("ideas"))
+    hooks = as_list(analysis.get("hooks"))
+    recent_posts = as_list(account.get("recentPosts"))
+    username = str(account.get("username") or extract_username_from_profile_url(row["profile_url"]) or "").strip()
+    niche = str(row.get("niche") or profile_summary.get("niche") or account.get("niche") or "").strip()
+    compatibility_score = parse_score(profile_summary.get("compatibilityScore"))
+    total_likes = sum(numeric_value(as_dict(post).get("likesCount")) for post in recent_posts)
+    total_comments = sum(numeric_value(as_dict(post).get("commentsCount")) for post in recent_posts)
+    total_views = sum(numeric_value(as_dict(post).get("videoViewCount")) for post in recent_posts)
+    log_items = logs or []
+
+    payload: dict[str, Any] = {
+        "id": row["id"],
+        "user": {
+            "id": row["user_id"],
+            "email": row.get("user_email", ""),
+            "displayName": row.get("user_display_name", ""),
+            "createdAt": row.get("user_created_at", ""),
+        },
+        "profileUrl": row["profile_url"],
+        "username": username,
+        "profileName": str(account.get("fullName") or username),
+        "platform": str(account.get("platform") or "Unknown"),
+        "profilePicUrl": str(account.get("profilePicUrl") or ""),
+        "biography": str(account.get("biography") or ""),
+        "niche": niche,
+        "followersCount": account.get("followersCount"),
+        "followsCount": account.get("followsCount"),
+        "postsCount": account.get("postsCount"),
+        "isVerified": bool(account.get("isVerified")),
+        "isPrivate": bool(account.get("isPrivate")),
+        "compatibilityLabel": str(profile_summary.get("compatibilityLabel") or ""),
+        "compatibilityScore": compatibility_score,
+        "positioning": str(profile_summary.get("positioning") or ""),
+        "audienceSummary": str(profile_summary.get("audienceSummary") or ""),
+        "trendsCount": len(trends),
+        "ideasCount": len(ideas),
+        "hooksCount": len(hooks),
+        "recommendationsCount": len(as_list(recommendations.get("bullets"))),
+        "sourcesCount": len(sources),
+        "recentPostsCount": len(recent_posts),
+        "totalLikes": total_likes,
+        "totalComments": total_comments,
+        "totalViews": total_views,
+        "logsCount": len(log_items),
+        "createdAt": row["created_at"],
+        "cacheKey": row.get("cache_key", ""),
+    }
+
+    if include_payload:
+        payload.update(
+            {
+                "account": account,
+                "analysis": analysis,
+                "sources": sources,
+                "logs": log_items,
+            }
+        )
+
+    return payload
+
+
+def extract_username_from_profile_url(profile_url: str) -> str:
+    try:
+        parts = [part for part in urlparse(profile_url).path.split("/") if part]
+    except ValueError:
+        return ""
+    if not parts:
+        return ""
+    return parts[0].removeprefix("@")
+
+
+def parse_admin_filters() -> dict[str, Any]:
+    args = flask_request.args
+    return {
+        "q": str(args.get("q", "")).strip().lower(),
+        "platform": str(args.get("platform", "")).strip().lower(),
+        "niche": str(args.get("niche", "")).strip().lower(),
+        "user": str(args.get("user", "")).strip().lower(),
+        "scoreMin": parse_score(args.get("scoreMin")),
+        "scoreMax": parse_score(args.get("scoreMax")),
+        "dateFrom": parse_datetime(args.get("dateFrom")),
+        "dateTo": parse_datetime(args.get("dateTo")),
+        "sort": str(args.get("sort", "newest")).strip().lower(),
+        "limit": min(max(parse_int(args.get("limit"), 100), 1), 500),
+        "offset": max(parse_int(args.get("offset"), 0), 0),
+    }
+
+
+def admin_item_matches_filters(item: dict[str, Any], filters: dict[str, Any]) -> bool:
+    query = filters.get("q", "")
+    if query:
+        haystack = " ".join(
+            str(value or "")
+            for value in (
+                item.get("profileUrl"),
+                item.get("username"),
+                item.get("profileName"),
+                item.get("platform"),
+                item.get("niche"),
+                item.get("biography"),
+                item.get("compatibilityLabel"),
+                item.get("positioning"),
+                item.get("audienceSummary"),
+                item.get("user", {}).get("email"),
+                item.get("user", {}).get("displayName"),
+            )
+        ).lower()
+        if query not in haystack:
+            return False
+
+    platform = filters.get("platform", "")
+    if platform and platform != "all" and str(item.get("platform", "")).lower() != platform:
+        return False
+
+    niche = filters.get("niche", "")
+    if niche and niche not in str(item.get("niche", "")).lower():
+        return False
+
+    user = filters.get("user", "")
+    if user:
+        user_payload = item.get("user", {})
+        user_haystack = f"{user_payload.get('email', '')} {user_payload.get('displayName', '')}".lower()
+        if user not in user_haystack:
+            return False
+
+    score = item.get("compatibilityScore")
+    score_min = filters.get("scoreMin")
+    score_max = filters.get("scoreMax")
+    if score_min is not None and (score is None or score < score_min):
+        return False
+    if score_max is not None and (score is None or score > score_max):
+        return False
+
+    created_at = parse_datetime(item.get("createdAt"))
+    if filters.get("dateFrom") and (created_at is None or created_at < filters["dateFrom"]):
+        return False
+    if filters.get("dateTo") and (created_at is None or created_at > filters["dateTo"]):
+        return False
+
+    return True
+
+
+def sort_admin_items(items: list[dict[str, Any]], sort_key: str) -> list[dict[str, Any]]:
+    if sort_key == "score-high":
+        return sorted(items, key=lambda item: item.get("compatibilityScore") or -1, reverse=True)
+    if sort_key == "score-low":
+        return sorted(items, key=lambda item: item.get("compatibilityScore") if item.get("compatibilityScore") is not None else 101)
+    if sort_key == "followers-high":
+        return sorted(items, key=lambda item: numeric_value(item.get("followersCount")), reverse=True)
+    if sort_key == "username":
+        return sorted(items, key=lambda item: str(item.get("username", "")).lower())
+    return sorted(items, key=row_created_at, reverse=True)
+
+
+def get_admin_analyses_payload(filters: dict[str, Any] | None = None) -> dict[str, Any]:
+    filters = filters or {
+        "q": "",
+        "platform": "",
+        "niche": "",
+        "user": "",
+        "scoreMin": None,
+        "scoreMax": None,
+        "dateFrom": None,
+        "dateTo": None,
+        "sort": "newest",
+        "limit": 100,
+        "offset": 0,
+    }
+    rows = fetch_admin_analysis_rows()
+    log_counts = admin_logs_by_run_ids([row["id"] for row in rows])
+    items = [
+        admin_analysis_to_payload(row, include_payload=False, logs=log_counts.get(row["id"], []))
+        for row in rows
+    ]
+    filtered_items = [item for item in items if admin_item_matches_filters(item, filters)]
+    sorted_items = sort_admin_items(filtered_items, filters.get("sort", "newest"))
+    offset = filters.get("offset", 0)
+    limit = filters.get("limit", 100)
+
+    return {
+        "items": sorted_items[offset : offset + limit],
+        "total": len(filtered_items),
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+def counter_items(counter: Counter[str], limit: int = 10, rare: bool = False) -> list[dict[str, Any]]:
+    values = [(label, count) for label, count in counter.items() if label and count > 0]
+    values.sort(key=lambda item: (item[1], item[0].lower()) if rare else (-item[1], item[0].lower()))
+    return [{"label": label, "value": count} for label, count in values[:limit]]
+
+
+def build_admin_overview(filters: dict[str, Any] | None = None) -> dict[str, Any]:
+    rows = fetch_admin_analysis_rows()
+    logs = admin_logs_by_run_ids([row["id"] for row in rows])
+    items = [admin_analysis_to_payload(row, logs=logs.get(row["id"], [])) for row in rows]
+    now = utc_now()
+    scores = [item["compatibilityScore"] for item in items if item.get("compatibilityScore") is not None]
+    user_rows = get_database().fetch_all("SELECT id, email, display_name, created_at FROM users ORDER BY created_at DESC")
+
+    platform_counter: Counter[str] = Counter()
+    niche_counter: Counter[str] = Counter()
+    profile_counter: Counter[str] = Counter()
+    user_counter: Counter[str] = Counter()
+    user_id_counter: Counter[str] = Counter()
+    trend_counter: Counter[str] = Counter()
+    hook_counter: Counter[str] = Counter()
+    source_counter: Counter[str] = Counter()
+    score_buckets: Counter[str] = Counter({"0-20": 0, "21-40": 0, "41-60": 0, "61-80": 0, "81-100": 0})
+    daily_counter: Counter[str] = Counter()
+    hourly_counter: Counter[str] = Counter()
+
+    daily_keys = []
+    for days_back in range(13, -1, -1):
+        key = (now - timedelta(days=days_back)).date().isoformat()
+        daily_counter[key] = 0
+        daily_keys.append(key)
+
+    hourly_keys = []
+    current_hour = now.replace(minute=0, second=0, microsecond=0)
+    for hours_back in range(23, -1, -1):
+        key = (current_hour - timedelta(hours=hours_back)).isoformat()
+        hourly_counter[key] = 0
+        hourly_keys.append(key)
+
+    for row, item in zip(rows, items):
+        account = as_dict(safe_json_loads(row.get("account_payload"), {}))
+        analysis = as_dict(safe_json_loads(row.get("analysis_payload"), {}))
+        sources = as_list(safe_json_loads(row.get("sources_payload"), []))
+        created_at = row_created_at(item)
+        platform_counter[item.get("platform") or "Unknown"] += 1
+        niche_counter[item.get("niche") or "Без ниши"] += 1
+        profile_label = f"@{item.get('username')}" if item.get("username") else item.get("profileUrl", "Unknown")
+        profile_counter[str(profile_label)] += 1
+        user_payload = item.get("user", {})
+        user_label = str(user_payload.get("displayName") or user_payload.get("email") or "Unknown user")
+        user_counter[user_label] += 1
+        user_id_counter[str(user_payload.get("id") or "")] += 1
+
+        score = item.get("compatibilityScore")
+        if isinstance(score, int):
+            if score <= 20:
+                score_buckets["0-20"] += 1
+            elif score <= 40:
+                score_buckets["21-40"] += 1
+            elif score <= 60:
+                score_buckets["41-60"] += 1
+            elif score <= 80:
+                score_buckets["61-80"] += 1
+            else:
+                score_buckets["81-100"] += 1
+
+        date_key = created_at.date().isoformat()
+        if date_key in daily_counter:
+            daily_counter[date_key] += 1
+        hour_key = created_at.replace(minute=0, second=0, microsecond=0).isoformat()
+        if hour_key in hourly_counter:
+            hourly_counter[hour_key] += 1
+
+        for trend in as_list(analysis.get("trends")):
+            title = str(as_dict(trend).get("title") or "").strip()
+            if title:
+                trend_counter[title[:140]] += 1
+
+        for hook in as_list(analysis.get("hooks")):
+            hook_text = str(hook).strip()
+            if hook_text:
+                hook_counter[hook_text[:160]] += 1
+
+        for source in sources:
+            if isinstance(source, dict):
+                source_counter[source_label(source)] += 1
+
+    analyses_payload = get_admin_analyses_payload(filters)
+
+    return {
+        "generatedAt": iso_now(),
+        "realtimeAvailable": SocketIO is not None,
+        "summary": {
+            "totalUsers": len(user_rows),
+            "totalAnalyses": len(items),
+            "totalLogs": sum(len(value) for value in logs.values()),
+            "uniqueProfiles": len({item.get("profileUrl") for item in items if item.get("profileUrl")}),
+            "analysesLast24h": sum(1 for item in items if now - row_created_at(item) <= timedelta(hours=24)),
+            "analysesLast7d": sum(1 for item in items if now - row_created_at(item) <= timedelta(days=7)),
+            "averageCompatibility": round(sum(scores) / len(scores)) if scores else 0,
+            "totalSources": sum(item.get("sourcesCount", 0) for item in items),
+            "totalHooks": sum(item.get("hooksCount", 0) for item in items),
+            "totalIdeas": sum(item.get("ideasCount", 0) for item in items),
+            "totalTrends": sum(item.get("trendsCount", 0) for item in items),
+        },
+        "charts": {
+            "platforms": counter_items(platform_counter, limit=8),
+            "scoreBuckets": [{"label": label, "value": score_buckets[label]} for label in score_buckets],
+            "dailyAnalyses": [{"label": key, "value": daily_counter[key]} for key in daily_keys],
+            "hourlyAnalyses": [{"label": key, "value": hourly_counter[key]} for key in hourly_keys],
+        },
+        "rankings": {
+            "topNiches": counter_items(niche_counter, limit=12),
+            "rareNiches": counter_items(niche_counter, limit=12, rare=True),
+            "topProfiles": counter_items(profile_counter, limit=12),
+            "rareProfiles": counter_items(profile_counter, limit=12, rare=True),
+            "topUsers": counter_items(user_counter, limit=12),
+            "topTrends": counter_items(trend_counter, limit=12),
+            "rareTrends": counter_items(trend_counter, limit=12, rare=True),
+            "topHooks": counter_items(hook_counter, limit=12),
+            "rareHooks": counter_items(hook_counter, limit=12, rare=True),
+            "topSources": counter_items(source_counter, limit=12),
+            "rareSources": counter_items(source_counter, limit=12, rare=True),
+        },
+        "users": [
+            {
+                "id": row["id"],
+                "email": row["email"],
+                "displayName": row["display_name"],
+                "createdAt": row["created_at"],
+                "analysesCount": user_id_counter.get(row["id"], 0),
+            }
+            for row in user_rows
+        ],
+        "analyses": analyses_payload,
+    }
+
+
+def get_admin_analysis_detail(run_id: str) -> dict[str, Any] | None:
+    row = get_database().fetch_one(
+        """
+        SELECT
+            analysis_runs.id,
+            analysis_runs.user_id,
+            analysis_runs.profile_url,
+            analysis_runs.niche,
+            analysis_runs.account_payload,
+            analysis_runs.analysis_payload,
+            analysis_runs.sources_payload,
+            analysis_runs.created_at,
+            analysis_runs.cache_key,
+            users.email AS user_email,
+            users.display_name AS user_display_name,
+            users.created_at AS user_created_at
+        FROM analysis_runs
+        JOIN users ON users.id = analysis_runs.user_id
+        WHERE analysis_runs.id = ?
+        LIMIT 1
+        """,
+        (run_id,),
+    )
+    if not row:
+        return None
+    return admin_analysis_to_payload(
+        row,
+        include_payload=True,
+        logs=admin_logs_by_run_ids([run_id]).get(run_id, []),
+    )
+
+
+def create_admin_analysis_log(run_id: str, message: str) -> dict[str, Any]:
+    if not get_admin_analysis_detail(run_id):
+        raise ApiError("Analysis not found.", 404)
+
+    cleaned_message = message.strip()
+    if not cleaned_message:
+        raise ApiError("Log message cannot be empty.", 400)
+    if len(cleaned_message) > 2000:
+        raise ApiError("Log message is too long.", 400)
+
+    log_id = str(uuid.uuid4())
+    created_at = iso_now()
+    get_database().execute(
+        """
+        INSERT INTO admin_analysis_logs (id, run_id, message, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (log_id, run_id, cleaned_message, created_at),
+    )
+    log_payload = {"id": log_id, "runId": run_id, "message": cleaned_message, "createdAt": created_at}
+    emit_admin_realtime("analysis_logged", {"runId": run_id, "log": log_payload})
+    emit_admin_realtime("snapshot", build_admin_overview())
+    return log_payload
+
+
+def emit_admin_realtime(event_name: str, payload: dict[str, Any]) -> None:
+    try:
+        socketio = current_app.extensions.get("socketio")
+    except RuntimeError:
+        return
+    if not socketio:
+        return
+    socketio.emit(f"admin:{event_name}", payload, namespace="/adminpanel")
+
+
 def consume_rate_limit(scope: str, subject: str, limit: int, window_seconds: int) -> None:
     allowed, remaining = get_database().upsert_rate_limit(scope, subject, limit, window_seconds)
     if not allowed:
@@ -1672,13 +2449,18 @@ def register_routes(app: Flask) -> None:
         if origin and origin in allowed_origins:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Vary"] = "Origin"
-        response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+        elif origin and current_app.config.get("ADMIN_ALLOW_LOCAL_ORIGINS"):
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+        response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-CSRF-Token"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        if flask_request.path.startswith("/admin/"):
+            response.headers["Cache-Control"] = "no-store"
         if current_app.config["APP_ENV"] == "production":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
@@ -1702,6 +2484,79 @@ def register_routes(app: Flask) -> None:
     def readiness():
         get_database().ping()
         return jsonify({"status": "ready"})
+
+    @app.route("/admin/auth/login", methods=["POST", "OPTIONS"])
+    def admin_login():
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+
+        require_admin_origin()
+        consume_rate_limit(
+            "admin-login",
+            get_request_subject("admin-login"),
+            current_app.config["AUTH_LIMIT_PER_15_MINUTES"],
+            15 * 60,
+        )
+
+        payload = request_json()
+        username = str(payload.get("username", "")).strip()
+        password = str(payload.get("password", ""))
+        if not verify_admin_credentials(username, password):
+            raise ApiError("Invalid admin login or password.", 401)
+
+        token = create_admin_session()
+        session = get_admin_session_from_token(token, touch=False)
+        response = jsonify({"admin": admin_to_payload(session)})
+        return attach_admin_session_cookie(response, token)
+
+    @app.route("/admin/auth/me", methods=["GET", "OPTIONS"])
+    def admin_me():
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+        session = get_current_admin()
+        return jsonify({"admin": admin_to_payload(session)})
+
+    @app.route("/admin/auth/logout", methods=["POST", "OPTIONS"])
+    def admin_logout():
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+        get_current_admin(require_csrf=True)
+        logout_current_admin()
+        response = jsonify({"status": "logged_out"})
+        return clear_admin_session_cookie(response)
+
+    @app.route("/admin/overview", methods=["GET", "OPTIONS"])
+    def admin_overview():
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+        get_current_admin()
+        return jsonify(build_admin_overview(parse_admin_filters()))
+
+    @app.route("/admin/analyses", methods=["GET", "OPTIONS"])
+    def admin_analyses():
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+        get_current_admin()
+        return jsonify(get_admin_analyses_payload(parse_admin_filters()))
+
+    @app.route("/admin/analyses/<run_id>", methods=["GET", "OPTIONS"])
+    def admin_analysis_details(run_id: str):
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+        get_current_admin()
+        analysis_run = get_admin_analysis_detail(run_id)
+        if not analysis_run:
+            raise ApiError("Analysis not found.", 404)
+        return jsonify(analysis_run)
+
+    @app.route("/admin/analyses/<run_id>/logs", methods=["POST", "OPTIONS"])
+    def admin_create_analysis_log(run_id: str):
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+        get_current_admin(require_csrf=True)
+        payload = request_json()
+        log_payload = create_admin_analysis_log(run_id, str(payload.get("message", "")))
+        return jsonify({"log": log_payload}), 201
 
     @app.route("/auth/register", methods=["POST", "OPTIONS"])
     def register():
@@ -1846,6 +2701,64 @@ def register_routes(app: Flask) -> None:
         )
 
 
+def init_admin_socketio(app: Flask) -> None:
+    if SocketIO is None or emit is None:
+        app.extensions["socketio"] = None
+        app.logger.warning("Flask-SocketIO is not installed; admin realtime updates are disabled.")
+        return
+
+    socketio = SocketIO(
+        app,
+        cors_allowed_origins=list(build_allowed_origins(app.config["FRONTEND_ORIGIN"])),
+        manage_session=False,
+    )
+    app.extensions["socketio"] = socketio
+
+    @socketio.on("connect", namespace="/adminpanel")
+    def admin_socket_connect(auth=None):
+        token = flask_request.cookies.get(app.config["ADMIN_SESSION_COOKIE_NAME"], "").strip()
+
+        try:
+            get_admin_session_from_token(token)
+        except ApiError:
+            return False
+
+        emit("admin:snapshot", build_admin_overview(), namespace="/adminpanel")
+        return True
+
+    @socketio.on("admin:refresh", namespace="/adminpanel")
+    def admin_socket_refresh():
+        emit("admin:snapshot", build_admin_overview(), namespace="/adminpanel")
+
+
+def run_backend_server(app_to_run: Flask, use_waitress: bool = False) -> None:
+    host = app_to_run.config.get("HOST", os.getenv("HOST", "0.0.0.0"))
+    port = int(app_to_run.config.get("PORT", os.getenv("PORT", "5000")))
+    socketio = app_to_run.extensions.get("socketio")
+
+    if socketio:
+        socketio.run(
+            app_to_run,
+            host=host,
+            port=port,
+            debug=app_to_run.config["DEBUG"],
+            allow_unsafe_werkzeug=app_to_run.config["APP_ENV"] != "production",
+        )
+        return
+
+    if use_waitress:
+        from waitress import serve
+
+        serve(app_to_run, host=host, port=port, threads=8)
+        return
+
+    app_to_run.run(
+        host=host,
+        port=port,
+        debug=app_to_run.config["DEBUG"],
+    )
+
+
 def create_app(overrides: dict[str, Any] | None = None) -> Flask:
     config = AppConfig.from_env(overrides)
 
@@ -1873,6 +2786,12 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
         SESSION_TTL_HOURS=config.session_ttl_hours,
         ANALYSIS_LIMIT_PER_HOUR=config.analysis_limit_per_hour,
         AUTH_LIMIT_PER_15_MINUTES=config.auth_limit_per_15_min,
+        ADMIN_USERNAME=config.admin_username,
+        ADMIN_PASSWORD=config.admin_password,
+        ADMIN_PASSWORD_HASH=config.admin_password_hash,
+        ADMIN_ALLOW_LOCAL_ORIGINS=config.admin_allow_local_origins,
+        ADMIN_SESSION_TTL_HOURS=config.admin_session_ttl_hours,
+        ADMIN_SESSION_COOKIE_NAME=config.admin_session_cookie_name,
         PORT=config.port,
         HOST=config.host,
         DEBUG=config.debug,
@@ -1887,6 +2806,7 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
     app.extensions["database"] = database
 
     register_routes(app)
+    init_admin_socketio(app)
     return app
 
 
@@ -1894,8 +2814,4 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    app.run(
-        host=app.config["HOST"],
-        port=app.config["PORT"],
-        debug=app.config["DEBUG"],
-    )
+    run_backend_server(app)

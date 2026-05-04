@@ -16,6 +16,7 @@ from app import (
     create_app,
     ensure_analysis_shape,
     infer_compatibility_score,
+    parse_json_response_text,
 )
 
 
@@ -32,6 +33,8 @@ class BackendApiTests(unittest.TestCase):
                 "ANALYSIS_CACHE_TTL_MINUTES": 360,
                 "ANALYSIS_LIMIT_PER_HOUR": 10,
                 "AUTH_LIMIT_PER_15_MINUTES": 20,
+                "ADMIN_USERNAME": "Lekim",
+                "ADMIN_PASSWORD": "002qrwaim11",
             }
         )
         self.client = self.app.test_client()
@@ -57,6 +60,15 @@ class BackendApiTests(unittest.TestCase):
 
     def auth_headers(self, token: str):
         return {"Authorization": f"Bearer {token}"}
+
+    def admin_login(self):
+        return self.client.post(
+            "/admin/auth/login",
+            json={"username": "Lekim", "password": "002qrwaim11"},
+        )
+
+    def admin_csrf_headers(self, csrf_token: str):
+        return {"X-CSRF-Token": csrf_token}
 
     def analysis_result(self):
         return (
@@ -187,6 +199,28 @@ class BackendApiTests(unittest.TestCase):
         self.assertEqual(details_response.get_json()["id"], analysis_id)
         self.assertEqual(details_response.get_json()["account"]["username"], "example")
 
+        admin_csrf_token = self.admin_login().get_json()["admin"]["csrfToken"]
+        admin_overview_response = self.client.get("/admin/overview")
+        self.assertEqual(admin_overview_response.status_code, 200)
+        self.assertEqual(admin_overview_response.get_json()["summary"]["totalAnalyses"], 1)
+
+        admin_analyses_response = self.client.get("/admin/analyses")
+        self.assertEqual(admin_analyses_response.status_code, 200)
+        self.assertEqual(admin_analyses_response.get_json()["items"][0]["id"], analysis_id)
+
+        log_response = self.client.post(
+            f"/admin/analyses/{analysis_id}/logs",
+            headers=self.admin_csrf_headers(admin_csrf_token),
+            json={"message": "Checked by admin."},
+        )
+        self.assertEqual(log_response.status_code, 201)
+
+        admin_detail_response = self.client.get(
+            f"/admin/analyses/{analysis_id}",
+        )
+        self.assertEqual(admin_detail_response.status_code, 200)
+        self.assertEqual(admin_detail_response.get_json()["logs"][0]["message"], "Checked by admin.")
+
         clear_response = self.client.delete("/analyses", headers=self.auth_headers(token))
         self.assertEqual(clear_response.status_code, 200)
         self.assertEqual(clear_response.get_json()["deletedCount"], 1)
@@ -194,6 +228,34 @@ class BackendApiTests(unittest.TestCase):
         cleared_history_response = self.client.get("/analyses", headers=self.auth_headers(token))
         self.assertEqual(cleared_history_response.status_code, 200)
         self.assertEqual(cleared_history_response.get_json()["items"], [])
+
+    def test_admin_auth_is_separate_from_user_auth(self):
+        bad_login_response = self.client.post(
+            "/admin/auth/login",
+            json={"username": "Lekim", "password": "wrong-password"},
+        )
+        self.assertEqual(bad_login_response.status_code, 401)
+
+        login_response = self.admin_login()
+        self.assertEqual(login_response.status_code, 200)
+        admin_csrf_token = login_response.get_json()["admin"]["csrfToken"]
+
+        me_response = self.client.get("/admin/auth/me")
+        self.assertEqual(me_response.status_code, 200)
+        self.assertEqual(me_response.get_json()["admin"]["username"], "Lekim")
+
+        overview_response = self.client.get("/admin/overview")
+        self.assertEqual(overview_response.status_code, 200)
+        self.assertEqual(overview_response.get_json()["summary"]["totalAnalyses"], 0)
+
+        logout_without_csrf = self.client.post("/admin/auth/logout")
+        self.assertEqual(logout_without_csrf.status_code, 403)
+
+        logout_response = self.client.post(
+            "/admin/auth/logout",
+            headers=self.admin_csrf_headers(admin_csrf_token),
+        )
+        self.assertEqual(logout_response.status_code, 200)
 
     @patch("app.generate_analysis")
     @patch("app.fetch_apify_items")
@@ -338,6 +400,13 @@ class BackendApiTests(unittest.TestCase):
 
         self.assertGreaterEqual(score, 75)
         self.assertLessEqual(score, 90)
+
+    def test_parse_json_response_text_extracts_json_from_ai_wrapper(self):
+        payload = parse_json_response_text(
+            'Sure, here is the JSON:\n```json\n{"profileSummary": {"niche": "Games"}}\n```\nDone.'
+        )
+
+        self.assertEqual(payload["profileSummary"]["niche"], "Games")
 
     @patch("app.request_gemini_generate")
     def test_gemini_fallback_runs_after_retryable_error(self, request_gemini_generate_mock):

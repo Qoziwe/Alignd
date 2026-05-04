@@ -9,8 +9,9 @@ Flask API for Alignd. This service handles authentication, persistence, account 
 - Instagram and TikTok profile analysis pipeline
 - PostgreSQL-ready storage
 - analysis history and saved report retrieval
+- admin panel API, global analytics, analysis logging, and realtime Socket.IO events
 - health and readiness checks
-- production serving through Waitress
+- production serving through Gunicorn + Eventlet
 
 ## API surface
 
@@ -25,6 +26,11 @@ Flask API for Alignd. This service handles authentication, persistence, account 
 | `POST` | `/analyses/clear` | Clear saved analyses for clients that cannot use `DELETE` |
 | `GET` | `/analyses/<id>` | Load a saved analysis by id |
 | `POST` | `/analyze-account` | Run a new profile analysis |
+| `POST` | `/admin/auth/login` | Login to the admin panel |
+| `GET` | `/admin/overview` | Admin analytics, rankings, filters, and recent analyses |
+| `GET` | `/admin/analyses` | Admin list of all analyses |
+| `GET` | `/admin/analyses/<id>` | Admin full analysis details |
+| `POST` | `/admin/analyses/<id>/logs` | Add an admin log note to an analysis |
 | `GET` | `/health` | Liveness check |
 | `GET` | `/ready` | Readiness check including database ping |
 
@@ -34,6 +40,8 @@ Flask API for Alignd. This service handles authentication, persistence, account 
 flowchart LR
     U[users] --> S[auth_sessions]
     U --> R[analysis_runs]
+    AS[admin_sessions] --> AP[Admin panel]
+    R --> AL[admin_analysis_logs]
     RL[rate_limits] --> B[Backend middleware]
     R --> H[Recent analyses]
     R --> D[Saved analysis details]
@@ -43,6 +51,8 @@ Main tables:
 
 - `users`
 - `auth_sessions`
+- `admin_sessions`
+- `admin_analysis_logs`
 - `analysis_runs`
 - `rate_limits`
 
@@ -83,8 +93,20 @@ flowchart TD
 | `ANALYSIS_CACHE_TTL_MINUTES` | Yes | Saved cache TTL |
 | `ANALYSIS_LIMIT_PER_HOUR` | Yes | User analysis limit |
 | `AUTH_LIMIT_PER_15_MINUTES` | Yes | Auth request limit |
+| `ADMIN_USERNAME` | Yes in production | Admin panel login |
+| `ADMIN_PASSWORD_HASH` | Yes in production | Hashed admin password from `werkzeug.security.generate_password_hash` |
+| `ADMIN_PASSWORD` | Development only | Plaintext admin password fallback for local development |
+| `ADMIN_ALLOW_LOCAL_ORIGINS` | No | Development-only helper that allows localhost, 127.0.0.1, and private LAN origins |
+| `ADMIN_SESSION_TTL_HOURS` | No | Admin session lifetime |
+| `ADMIN_SESSION_COOKIE_NAME` | No | Admin session cookie name |
 
 ## Example production `.env`
+
+Generate `ADMIN_PASSWORD_HASH` on a trusted machine:
+
+```bash
+python -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('your-admin-password'))"
+```
 
 ```env
 APP_ENV=production
@@ -105,6 +127,11 @@ SESSION_TTL_HOURS=24
 ANALYSIS_CACHE_TTL_MINUTES=60
 ANALYSIS_LIMIT_PER_HOUR=25
 AUTH_LIMIT_PER_15_MINUTES=10
+ADMIN_USERNAME=replace_with_admin_username
+ADMIN_PASSWORD_HASH=replace_with_admin_password_hash
+ADMIN_ALLOW_LOCAL_ORIGINS=false
+ADMIN_SESSION_TTL_HOURS=12
+ADMIN_SESSION_COOKIE_NAME=alignd_admin_session
 ```
 
 ## Local run
@@ -121,7 +148,7 @@ python app.py
 
 ```bash
 cd backend
-python serve.py
+gunicorn --worker-class eventlet -w 1 --bind 127.0.0.1:5000 app:app
 ```
 
 ## Tests
@@ -135,8 +162,9 @@ python -m unittest discover -s tests -v
 
 - Use PostgreSQL in production
 - Run the service behind Nginx
-- Serve the app with `serve.py`, not the Flask development server
+- Serve production with Gunicorn + Eventlet so Socket.IO does not run on the development Werkzeug server.
 - Keep `HOST=127.0.0.1` when using Nginx reverse proxy
+- Proxy `/socket.io/` with WebSocket upgrade headers if Nginx sits in front of the backend
 - Restart the backend after each `.env` change
 
 For the full deployment guide, see the root [README](../README.md).
