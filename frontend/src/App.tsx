@@ -23,7 +23,7 @@ import {
   formatCompactNumber,
   getInitials,
 } from './lib/formatting';
-import aligndLogo from '../assets/AligndLogo.png';
+import ooppssieLogo from '../assets/ooppssieLogo.png';
 
 type Screen = 'home' | 'loading' | 'results' | 'profile';
 type AuthMode = 'login' | 'register';
@@ -223,7 +223,7 @@ function AnalysisPreloader() {
 function SavedAnalysisPreloader() {
   return (
     <div className="flex w-full max-w-[420px] flex-col items-center rounded-[18px] border border-white/10 bg-[#111116] px-8 py-8 text-center shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
-      <div className="text-[24px] font-black tracking-[0] text-white">ALIGND</div>
+      <div className="text-[24px] font-black tracking-[0] text-white">ooppssie</div>
       <div className="simple-loader-line mt-5">
         <span></span>
       </div>
@@ -545,10 +545,10 @@ export default function App() {
           type="button"
           onClick={() => setScreen('home')}
           className="inline-flex min-w-0 items-center gap-2 sm:gap-3"
-          aria-label="Alignd home"
+          aria-label="ooppssie home"
         >
-          <img src={aligndLogo} alt="Alignd" className="h-[34px] w-auto object-contain sm:h-[42px]" />
-          <span className="text-[23px] font-black tracking-[0] text-white sm:text-[28px]">Alignd</span>
+          <img src={ooppssieLogo} alt="ooppssie" className="h-[34px] w-auto object-contain sm:h-[42px]" />
+          <span className="text-[23px] font-black tracking-[0] text-white sm:text-[28px]">ooppssie</span>
         </button>
         {authLoading ? (
           <div className="text-sm text-gray-400">Проверяем сессию...</div>
@@ -1201,8 +1201,8 @@ export default function App() {
         <div className="mx-auto flex w-full max-w-[1184px] flex-col gap-8 px-6 py-10 sm:px-8 sm:py-12 lg:flex-row lg:justify-between lg:px-10">
           <div className="max-w-[420px]">
             <div className="flex items-center gap-3 sm:gap-4">
-              <img src={aligndLogo} alt="Alignd" className="h-[44px] w-auto object-contain sm:h-[52px]" />
-              <div className="text-[22px] font-black tracking-[0] text-white">Alignd</div>
+              <img src={ooppssieLogo} alt="ooppssie" className="h-[44px] w-auto object-contain sm:h-[52px]" />
+              <div className="text-[22px] font-black tracking-[0] text-white">ooppssie</div>
             </div>
             <p className="mt-5 text-[16px] leading-[1.4] text-[#A2A2AA]">
               Сервис для анализа Instagram и TikTok профилей, идей контента и персональных рекомендаций для роста.

@@ -1,4 +1,4 @@
-# Alignd
+# ooppssie
 
 AI-powered Instagram and TikTok profile analysis with account parsing, trend matching, content ideas, hooks, recommendations, authentication, and saved report history.
 
@@ -9,7 +9,7 @@ This repository contains two separate modules:
 
 ## What the product does
 
-Alignd takes an Instagram or TikTok profile URL, fetches profile data through Apify, researches fresh trends with Gemini and Google Search grounding, sends the normalized account data plus the trend research to Gemini, and returns a structured report with:
+ooppssie takes an Instagram or TikTok profile URL, fetches profile data through Apify, researches fresh trends with Gemini and Google Search grounding, sends the normalized account data plus the trend research to Gemini, and returns a structured report with:
 
 - profile positioning
 - audience summary
@@ -76,7 +76,7 @@ sequenceDiagram
 ## Monorepo layout
 
 ```text
-Alignd/
+ooppssie/
 +-- backend/
 |   +-- app.py
 |   +-- serve.py
@@ -106,7 +106,7 @@ PORT=5000
 DEBUG=true
 SECRET_KEY=dev-secret-change-me
 FRONTEND_ORIGIN=http://127.0.0.1:3000,http://localhost:3000
-DATABASE_URL=sqlite:///backend/data/alignd.db
+DATABASE_URL=sqlite:///backend/data/ooppssie.db
 APIFY_TOKEN=your_apify_token
 APIFY_INSTAGRAM_ACTOR_ID=apify~instagram-scraper
 APIFY_TIKTOK_ACTOR_ID=clockworks~tiktok-profile-scraper
@@ -178,8 +178,8 @@ npm run build
 
 This section assumes you want both modules on one server under `/www`:
 
-- backend source: `/www/alignd/backend`
-- frontend source: `/www/alignd/frontend`
+- backend source: `/www/ooppssie/backend`
+- frontend source: `/www/ooppssie/frontend`
 
 If your host uses `/var/www` instead, replace `/www` with `/var/www`.
 
@@ -188,7 +188,7 @@ If your host uses `/var/www` instead, replace `/www` with `/var/www`.
 ```mermaid
 flowchart TD
     Internet --> N[Nginx]
-    N -->|Static files| FE[/www/alignd/frontend/dist]
+    N -->|Static files| FE[/www/ooppssie/frontend/dist]
     N -->|/api/* + WebSocket reverse proxy| BE[Backend on 127.0.0.1:5000]
     BE --> PG[(PostgreSQL)]
     BE --> AP[Apify]
@@ -212,16 +212,16 @@ sudo apt install -y nodejs
 ### 2. Copy the project to the server
 
 ```bash
-sudo mkdir -p /www/alignd
-sudo chown -R $USER:$USER /www/alignd
-cd /www/alignd
+sudo mkdir -p /www/ooppssie
+sudo chown -R $USER:$USER /www/ooppssie
+cd /www/ooppssie
 ```
 
 Then upload or clone the project into that directory so you end up with:
 
 ```text
-/www/alignd/backend
-/www/alignd/frontend
+/www/ooppssie/backend
+/www/ooppssie/frontend
 ```
 
 ### 3. Create PostgreSQL database
@@ -233,16 +233,16 @@ sudo -u postgres psql
 Inside PostgreSQL:
 
 ```sql
-CREATE USER alignd WITH PASSWORD 'replace_with_a_strong_password';
-CREATE DATABASE alignd OWNER alignd;
-GRANT ALL PRIVILEGES ON DATABASE alignd TO alignd;
+CREATE USER ooppssie WITH PASSWORD 'replace_with_a_strong_password';
+CREATE DATABASE ooppssie OWNER ooppssie;
+GRANT ALL PRIVILEGES ON DATABASE ooppssie TO ooppssie;
 \q
 ```
 
 ### 4. Configure the backend
 
 ```bash
-cd /www/alignd/backend
+cd /www/ooppssie/backend
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
@@ -250,7 +250,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `/www/alignd/backend/.env`:
+Edit `/www/ooppssie/backend/.env`:
 
 Generate the admin password hash before filling `ADMIN_PASSWORD_HASH`:
 
@@ -265,7 +265,7 @@ PORT=5000
 DEBUG=false
 SECRET_KEY=replace_with_a_long_random_secret
 FRONTEND_ORIGIN=https://your-domain.com
-DATABASE_URL=postgresql://alignd:replace_with_a_strong_password@localhost:5432/alignd
+DATABASE_URL=postgresql://ooppssie:replace_with_a_strong_password@localhost:5432/ooppssie
 APIFY_TOKEN=your_apify_token
 APIFY_INSTAGRAM_ACTOR_ID=apify~instagram-scraper
 APIFY_TIKTOK_ACTOR_ID=clockworks~tiktok-profile-scraper
@@ -286,8 +286,8 @@ ADMIN_SESSION_TTL_HOURS=12
 Quick backend smoke test:
 
 ```bash
-source /www/alignd/backend/venv/bin/activate
-cd /www/alignd/backend
+source /www/ooppssie/backend/venv/bin/activate
+cd /www/ooppssie/backend
 gunicorn --worker-class eventlet -w 1 --bind 127.0.0.1:5000 app:app
 ```
 
@@ -296,12 +296,12 @@ If it starts correctly, stop it with `Ctrl+C`.
 ### 5. Configure the frontend
 
 ```bash
-cd /www/alignd/frontend
+cd /www/ooppssie/frontend
 npm install
 cp .env.example .env
 ```
 
-Edit `/www/alignd/frontend/.env`:
+Edit `/www/ooppssie/frontend/.env`:
 
 ```env
 VITE_API_URL=https://your-domain.com/api
@@ -310,25 +310,25 @@ VITE_API_URL=https://your-domain.com/api
 Build the frontend:
 
 ```bash
-cd /www/alignd/frontend
+cd /www/ooppssie/frontend
 npm run build
 ```
 
 ### 6. Create a systemd service for the backend
 
-Create `/etc/systemd/system/alignd-backend.service`:
+Create `/etc/systemd/system/ooppssie-backend.service`:
 
 ```ini
 [Unit]
-Description=Alignd backend service
+Description=ooppssie backend service
 After=network.target postgresql.service
 
 [Service]
 User=www-data
 Group=www-data
-WorkingDirectory=/www/alignd/backend
+WorkingDirectory=/www/ooppssie/backend
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/www/alignd/backend/venv/bin/gunicorn --worker-class eventlet -w 1 --bind 127.0.0.1:5000 app:app
+ExecStart=/www/ooppssie/backend/venv/bin/gunicorn --worker-class eventlet -w 1 --bind 127.0.0.1:5000 app:app
 Restart=always
 RestartSec=5
 
@@ -339,23 +339,23 @@ WantedBy=multi-user.target
 Set permissions and enable the service:
 
 ```bash
-sudo chown -R www-data:www-data /www/alignd
+sudo chown -R www-data:www-data /www/ooppssie
 sudo systemctl daemon-reload
-sudo systemctl enable alignd-backend
-sudo systemctl start alignd-backend
-sudo systemctl status alignd-backend
+sudo systemctl enable ooppssie-backend
+sudo systemctl start ooppssie-backend
+sudo systemctl status ooppssie-backend
 ```
 
 ### 7. Configure Nginx
 
-Create `/etc/nginx/sites-available/alignd`:
+Create `/etc/nginx/sites-available/ooppssie`:
 
 ```nginx
 server {
     listen 80;
     server_name your-domain.com;
 
-    root /www/alignd/frontend/dist;
+    root /www/ooppssie/frontend/dist;
     index index.html;
 
     location / {
@@ -387,7 +387,7 @@ server {
 Enable the site:
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/alignd /etc/nginx/sites-enabled/alignd
+sudo ln -s /etc/nginx/sites-available/ooppssie /etc/nginx/sites-enabled/ooppssie
 sudo nginx -t
 sudo systemctl reload nginx
 ```
@@ -438,22 +438,22 @@ Then verify manually in the browser:
 When you deploy a new version:
 
 ```bash
-cd /www/alignd
+cd /www/ooppssie
 ```
 
 Update backend:
 
 ```bash
-cd /www/alignd/backend
+cd /www/ooppssie/backend
 source venv/bin/activate
 pip install -r requirements.txt
-sudo systemctl restart alignd-backend
+sudo systemctl restart ooppssie-backend
 ```
 
 Update frontend:
 
 ```bash
-cd /www/alignd/frontend
+cd /www/ooppssie/frontend
 npm install
 npm run build
 sudo systemctl reload nginx
@@ -471,11 +471,11 @@ sudo systemctl reload nginx
 
 - Check PostgreSQL is running
 - Check `DATABASE_URL`
-- Check the database user has access to the `alignd` database
+- Check the database user has access to the `ooppssie` database
 
 ### Backend returns `500`
 
-- Check `journalctl -u alignd-backend -n 100 --no-pager`
+- Check `journalctl -u ooppssie-backend -n 100 --no-pager`
 - Check `APIFY_TOKEN`, `GEMINI_API_KEY`, and `SECRET_KEY`
 - Make sure the backend virtual environment is active and dependencies are installed
 

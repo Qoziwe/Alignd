@@ -378,7 +378,7 @@ class AppConfig:
 
         app_env = str(source.get("APP_ENV", "development")).strip().lower()
         database_url = str(
-            source.get("DATABASE_URL", "sqlite:///backend/data/alignd.db")
+            source.get("DATABASE_URL", "sqlite:///backend/data/ooppssie.db")
         ).strip()
         secret_key = str(source.get("SECRET_KEY", "dev-secret-change-me")).strip()
         frontend_origin = str(source.get("FRONTEND_ORIGIN", "http://127.0.0.1:3000")).strip()
@@ -453,13 +453,13 @@ class AppConfig:
                 source.get("ADMIN_SESSION_TTL_HOURS"), DEFAULT_ADMIN_SESSION_TTL_HOURS
             ),
             admin_session_cookie_name=str(
-                source.get("ADMIN_SESSION_COOKIE_NAME", "alignd_admin_session")
+                source.get("ADMIN_SESSION_COOKIE_NAME", "ooppssie_admin_session")
             ).strip(),
             port=parse_int(source.get("PORT"), 5000),
             host=str(source.get("HOST", "0.0.0.0")).strip(),
             debug=parse_bool(source.get("DEBUG"), app_env != "production"),
             enable_search_grounding=parse_bool(source.get("ENABLE_SEARCH_GROUNDING"), True),
-            session_cookie_name=str(source.get("SESSION_COOKIE_NAME", "alignd_session")).strip(),
+            session_cookie_name=str(source.get("SESSION_COOKIE_NAME", "ooppssie_session")).strip(),
             session_cookie_secure=parse_bool(source.get("SESSION_COOKIE_SECURE"), app_env == "production"),
             session_cookie_samesite=str(source.get("SESSION_COOKIE_SAMESITE", "Lax")).strip() or "Lax",
         )

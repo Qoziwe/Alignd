@@ -1,6 +1,6 @@
 # Backend
 
-Flask API for Alignd. This service handles authentication, persistence, account analysis, saved reports, rate limiting, and production readiness endpoints.
+Flask API for ooppssie. This service handles authentication, persistence, account analysis, saved reports, rate limiting, and production readiness endpoints.
 
 ## Responsibilities
 
@@ -115,7 +115,7 @@ PORT=5000
 DEBUG=false
 SECRET_KEY=replace_with_a_long_random_secret
 FRONTEND_ORIGIN=https://your-domain.com
-DATABASE_URL=postgresql://alignd:replace_with_a_strong_password@localhost:5432/alignd
+DATABASE_URL=postgresql://ooppssie:replace_with_a_strong_password@localhost:5432/ooppssie
 APIFY_TOKEN=your_apify_token
 APIFY_INSTAGRAM_ACTOR_ID=apify~instagram-scraper
 APIFY_TIKTOK_ACTOR_ID=clockworks~tiktok-profile-scraper
@@ -131,7 +131,7 @@ ADMIN_USERNAME=replace_with_admin_username
 ADMIN_PASSWORD_HASH=replace_with_admin_password_hash
 ADMIN_ALLOW_LOCAL_ORIGINS=false
 ADMIN_SESSION_TTL_HOURS=12
-ADMIN_SESSION_COOKIE_NAME=alignd_admin_session
+ADMIN_SESSION_COOKIE_NAME=ooppssie_admin_session
 ```
 
 ## Local run

@@ -9,15 +9,15 @@ import {
 } from '../src/lib/formatting';
 
 test('extractUsername reads username from instagram url', () => {
-  assert.equal(extractUsername('https://www.instagram.com/alignd.team/'), 'alignd.team');
+  assert.equal(extractUsername('https://www.instagram.com/ooppssie.team/'), 'ooppssie.team');
 });
 
 test('extractUsername supports @username format', () => {
-  assert.equal(extractUsername('@alignd.team'), 'alignd.team');
+  assert.equal(extractUsername('@ooppssie.team'), 'ooppssie.team');
 });
 
 test('extractUsername strips TikTok @ path prefix', () => {
-  assert.equal(extractUsername('https://www.tiktok.com/@alignd.team'), 'alignd.team');
+  assert.equal(extractUsername('https://www.tiktok.com/@ooppssie.team'), 'ooppssie.team');
 });
 
 test('formatCompactNumber returns dash for empty values', () => {
@@ -25,7 +25,7 @@ test('formatCompactNumber returns dash for empty values', () => {
 });
 
 test('getInitials returns first two characters', () => {
-  assert.equal(getInitials('Alignd'), 'AL');
+  assert.equal(getInitials('ooppssie'), 'OO');
 });
 
 test('formatAnalysisDate returns human readable string', () => {

@@ -1,6 +1,6 @@
 # Frontend
 
-React + Vite client for Alignd. This application handles authentication screens, analysis form submission, result rendering, and navigation through saved reports. The admin panel is served by the same bundle at `/adminpanel`.
+React + Vite client for ooppssie. This application handles authentication screens, analysis form submission, result rendering, and navigation through saved reports. The admin panel is served by the same bundle at `/adminpanel`.
 
 ## Responsibilities
 

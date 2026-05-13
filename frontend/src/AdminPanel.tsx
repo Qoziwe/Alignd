@@ -23,7 +23,7 @@ import {
   UsersRound,
 } from 'lucide-react';
 import type {LucideIcon} from 'lucide-react';
-import aligndLogo from '../assets/AligndLogo.png';
+import ooppssieLogo from '../assets/ooppssieLogo.png';
 
 type ChartItem = {
   label: string;
@@ -846,9 +846,9 @@ export default function AdminPanel() {
       <div className="min-h-screen bg-[#090D12] px-4 py-8 text-white">
         <div className="mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-[420px] flex-col justify-center">
           <div className="mb-7 flex items-center gap-3">
-            <img src={aligndLogo} alt="Alignd" className="h-11 w-auto" />
+            <img src={ooppssieLogo} alt="ooppssie" className="h-11 w-auto" />
             <div>
-              <div className="text-[24px] font-black tracking-[0]">Alignd Admin</div>
+              <div className="text-[24px] font-black tracking-[0]">ooppssie Admin</div>
               <div className="text-[13px] text-white/45">Отдельное окно управления</div>
             </div>
           </div>
@@ -895,7 +895,7 @@ export default function AdminPanel() {
       <header className="sticky top-0 z-20 border-b border-white/10 bg-[#090D12]/92 backdrop-blur">
         <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between lg:px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <img src={aligndLogo} alt="Alignd" className="h-10 w-auto shrink-0" />
+            <img src={ooppssieLogo} alt="ooppssie" className="h-10 w-auto shrink-0" />
             <div className="min-w-0">
               <h1 className="truncate text-[22px] font-black tracking-[0]">Admin Panel</h1>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-white/48">
