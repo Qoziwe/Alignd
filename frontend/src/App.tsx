@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import heroLiquid from '../assets/image.png';
 import {COOKIE_SESSION_MARKER} from './lib/auth';
+import ViralRadar from './components/ViralRadar';
 import {
   extractUsername,
   formatAnalysisDate,
@@ -494,15 +495,15 @@ export default function App() {
       <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
         {isResults ? (
           <>
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(57,48,85,0.22),transparent_26%),radial-gradient(circle_at_18%_24%,rgba(77,101,138,0.12),transparent_24%),radial-gradient(circle_at_78%_42%,rgba(72,84,108,0.12),transparent_20%),linear-gradient(180deg,#06060A_0%,#050507_52%,#040406_100%)]" />
-            <div className="absolute left-[-10%] top-[10%] h-[340px] w-[340px] rounded-full bg-[rgba(112,128,186,0.07)] blur-[120px]" />
-            <div className="absolute right-[-8%] top-[30%] h-[280px] w-[280px] rounded-full bg-[rgba(121,112,162,0.07)] blur-[120px]" />
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(232,64,168,0.12),transparent_26%),radial-gradient(circle_at_78%_42%,rgba(168,85,247,0.1),transparent_20%),linear-gradient(180deg,#050507_0%,#050507_52%,#050507_100%)]" />
+            <div className="absolute left-[-10%] top-[10%] h-[340px] w-[340px] rounded-full bg-[rgba(232,64,168,0.07)] blur-[120px]" />
+            <div className="absolute right-[-8%] top-[30%] h-[280px] w-[280px] rounded-full bg-[rgba(168,85,247,0.07)] blur-[120px]" />
           </>
         ) : (
           <>
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(66,71,111,0.32),transparent_34%),radial-gradient(circle_at_14%_18%,rgba(100,115,174,0.16),transparent_20%),radial-gradient(circle_at_84%_14%,rgba(122,96,164,0.16),transparent_20%),linear-gradient(180deg,#11131d_0%,#08090f_28%,#050507_62%,#040406_100%)]" />
-            <div className="absolute left-[-8%] top-[7%] h-[380px] w-[380px] rounded-full bg-[rgba(124,142,255,0.08)] blur-[120px]" />
-            <div className="absolute right-[-10%] top-[-2%] h-[340px] w-[340px] rounded-full bg-[rgba(170,154,255,0.08)] blur-[140px]" />
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(232,64,168,0.14),transparent_34%),radial-gradient(circle_at_84%_14%,rgba(168,85,247,0.12),transparent_20%),linear-gradient(180deg,#050507_0%,#050507_28%,#050507_62%,#050507_100%)]" />
+            <div className="absolute left-[-8%] top-[7%] h-[380px] w-[380px] rounded-full bg-[rgba(232,64,168,0.08)] blur-[120px]" />
+            <div className="absolute right-[-10%] top-[-2%] h-[340px] w-[340px] rounded-full bg-[rgba(168,85,247,0.08)] blur-[140px]" />
           </>
         )}
       </div>
@@ -616,6 +617,8 @@ export default function App() {
               </div>
             </section>
 
+            {user && <ViralRadar />}
+
             {!user && !authLoading && (
               <section className={`${cardClass} mt-10 backdrop-blur-md sm:mt-12`}>
                 <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
@@ -694,7 +697,7 @@ export default function App() {
 
             <section
               ref={formSectionRef}
-              className={`${cardClass} ${user ? 'mt-16 sm:mt-20 lg:mt-24' : 'mt-6'} backdrop-blur-md`}
+              className={`${cardClass} ${user ? 'mt-10 sm:mt-12' : 'mt-6'} backdrop-blur-md`}
             >
               <div className="flex flex-col items-start justify-between gap-4 sm:flex-row">
                 <div>
@@ -1201,7 +1204,6 @@ export default function App() {
         <div className="mx-auto flex w-full max-w-[1184px] flex-col gap-8 px-6 py-10 sm:px-8 sm:py-12 lg:flex-row lg:justify-between lg:px-10">
           <div className="max-w-[420px]">
             <div className="flex items-center gap-3 sm:gap-4">
-              <img src={ooppssieLogo} alt="ooppssie" className="h-[44px] w-auto object-contain sm:h-[52px]" />
               <div className="text-[22px] font-black tracking-[0] text-white">ooppssie</div>
             </div>
             <p className="mt-5 text-[16px] leading-[1.4] text-[#A2A2AA]">
