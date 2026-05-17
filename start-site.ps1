@@ -109,6 +109,10 @@ Write-Info 'Press Ctrl+C to stop both processes.'
 $backendJob = Start-Job -Name 'ooppssie-backend' -ScriptBlock {
   param($WorkingDir, $PythonPath, $EntryPoint)
   Set-Location $WorkingDir
+  $env:APP_ENV = 'development'
+  $env:DEBUG = 'true'
+  $env:ADMIN_ALLOW_LOCAL_ORIGINS = 'true'
+  $env:SESSION_COOKIE_SECURE = 'false'
   & $PythonPath $EntryPoint
 } -ArgumentList $BackendDir, $Python, $backendEntry
 

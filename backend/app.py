@@ -110,6 +110,21 @@ TREND_PLATFORMS = {"tiktok", "instagram", "reels", "shorts", "youtube_shorts"}
 TREND_SPEEDS = {"slow", "medium", "fast", "explosive"}
 TREND_LIFECYCLE_STAGES = {"underground", "emerging", "breakout", "saturated", "dead"}
 REMIX_FORMATS = {"auto", "expert_blog", "humor", "faceless", "storytelling", "educational"}
+POINT_EVENTS = {
+    "FIRST_ANALYSIS": (50, "Первый анализ профиля"),
+    "ANALYSIS_DONE": (15, "Анализ профиля"),
+    "REMIX_CREATED": (30, "Создан ремикс тренда"),
+}
+ACHIEVEMENTS = {
+    "first_blood": ("Первопроходец", "Первый анализ профиля", "search-check"),
+    "trend_hunter": ("Охотник за трендами", "10 анализов выполнено", "target"),
+    "remix_master": ("Мастер ремиксов", "5 ремиксов создано", "clapperboard"),
+}
+RANK_THRESHOLDS = [
+    (0, "Новичок", "circle"),
+    (200, "Охотник", "target"),
+    (500, "Трендсеттер", "trophy"),
+]
 
 
 def load_dotenv_file(dotenv_path: str = ".env") -> None:
@@ -576,8 +591,196 @@ class Database:
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
+    def table_columns(self, table_name: str) -> set[str]:
+        if self.is_sqlite:
+            rows = self.fetch_all(f"PRAGMA table_info({table_name})")
+            return {str(row["name"]) for row in rows}
+
+        rows = self.fetch_all(
+            """
+            SELECT column_name AS name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = ?
+            """,
+            (table_name,),
+        )
+        return {str(row["name"]) for row in rows}
+
+    def add_missing_columns(self, table_name: str, columns: list[tuple[str, str]]) -> None:
+        existing_columns = self.table_columns(table_name)
+        for column_name, definition in columns:
+            if column_name in existing_columns:
+                continue
+            self.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+
+    def backfill_schema_defaults(self) -> None:
+        now = iso_now()
+        defaults: list[tuple[str, tuple[Any, ...]]] = [
+            ("UPDATE users SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = ''", ()),
+            ("UPDATE analysis_runs SET sources_payload = '[]' WHERE sources_payload IS NULL OR sources_payload = ''", ()),
+            ("UPDATE analysis_runs SET cache_key = '' WHERE cache_key IS NULL", ()),
+            ("UPDATE trends SET country_origin = 'US' WHERE country_origin IS NULL OR country_origin = ''", ()),
+            ("UPDATE trends SET viral_score = 50 WHERE viral_score IS NULL", ()),
+            ("UPDATE trends SET trend_speed = 'medium' WHERE trend_speed IS NULL OR trend_speed = ''", ()),
+            ("UPDATE trends SET saturation_sng = 10 WHERE saturation_sng IS NULL", ()),
+            ("UPDATE trends SET lifecycle_stage = 'emerging' WHERE lifecycle_stage IS NULL OR lifecycle_stage = ''", ()),
+            ("UPDATE trends SET created_at = ? WHERE created_at IS NULL OR created_at = ''", (now,)),
+            ("UPDATE trends SET is_active = 1 WHERE is_active IS NULL", ()),
+            ("UPDATE user_points SET total_points = 0 WHERE total_points IS NULL", ()),
+            ("UPDATE user_points SET updated_at = ? WHERE updated_at IS NULL OR updated_at = ''", (now,)),
+        ]
+        for query, params in defaults:
+            self.execute(query, params)
+
+    def remove_duplicate_achievements(self) -> None:
+        duplicates = self.fetch_all(
+            """
+            SELECT user_id, achievement_key, COUNT(*) AS total
+            FROM user_achievements
+            GROUP BY user_id, achievement_key
+            HAVING COUNT(*) > 1
+            """
+        )
+        for duplicate in duplicates:
+            rows = self.fetch_all(
+                """
+                SELECT id
+                FROM user_achievements
+                WHERE user_id = ? AND achievement_key = ?
+                ORDER BY earned_at ASC, id ASC
+                """,
+                (duplicate["user_id"], duplicate["achievement_key"]),
+            )
+            duplicate_ids = [row["id"] for row in rows[1:]]
+            if not duplicate_ids:
+                continue
+            placeholders = ", ".join("?" for _ in duplicate_ids)
+            self.execute(
+                f"DELETE FROM user_achievements WHERE id IN ({placeholders})",
+                tuple(duplicate_ids),
+            )
+
+    def migrate_schema(self) -> None:
+        self.add_missing_columns(
+            "users",
+            [
+                ("email", "TEXT DEFAULT ''"),
+                ("display_name", "TEXT DEFAULT ''"),
+                ("password_hash", "TEXT DEFAULT ''"),
+                ("created_at", "TEXT DEFAULT ''"),
+                ("updated_at", "TEXT DEFAULT ''"),
+            ],
+        )
+        self.add_missing_columns(
+            "auth_sessions",
+            [
+                ("user_id", "TEXT DEFAULT ''"),
+                ("token_hash", "TEXT DEFAULT ''"),
+                ("created_at", "TEXT DEFAULT ''"),
+                ("expires_at", "TEXT DEFAULT ''"),
+                ("last_used_at", "TEXT DEFAULT ''"),
+            ],
+        )
+        self.add_missing_columns(
+            "analysis_runs",
+            [
+                ("user_id", "TEXT DEFAULT ''"),
+                ("profile_url", "TEXT DEFAULT ''"),
+                ("niche", "TEXT DEFAULT ''"),
+                ("account_payload", "TEXT DEFAULT '{}'"),
+                ("analysis_payload", "TEXT DEFAULT '{}'"),
+                ("sources_payload", "TEXT DEFAULT '[]'"),
+                ("created_at", "TEXT DEFAULT ''"),
+                ("cache_key", "TEXT DEFAULT ''"),
+            ],
+        )
+        self.add_missing_columns(
+            "admin_sessions",
+            [
+                ("token_hash", "TEXT DEFAULT ''"),
+                ("created_at", "TEXT DEFAULT ''"),
+                ("expires_at", "TEXT DEFAULT ''"),
+                ("last_used_at", "TEXT DEFAULT ''"),
+            ],
+        )
+        self.add_missing_columns(
+            "admin_analysis_logs",
+            [
+                ("run_id", "TEXT DEFAULT ''"),
+                ("message", "TEXT DEFAULT ''"),
+                ("created_at", "TEXT DEFAULT ''"),
+            ],
+        )
+        self.add_missing_columns(
+            "rate_limits",
+            [
+                ("scope", "TEXT DEFAULT ''"),
+                ("subject", "TEXT DEFAULT ''"),
+                ("count", "INTEGER DEFAULT 0"),
+                ("window_started_at", "TEXT DEFAULT ''"),
+            ],
+        )
+        self.add_missing_columns(
+            "trends",
+            [
+                ("title", "TEXT DEFAULT ''"),
+                ("description", "TEXT DEFAULT ''"),
+                ("platform", "TEXT DEFAULT 'tiktok'"),
+                ("niche", "TEXT"),
+                ("country_origin", "TEXT DEFAULT 'US'"),
+                ("source_url", "TEXT"),
+                ("video_preview_url", "TEXT"),
+                ("scout_comment", "TEXT"),
+                ("viral_score", "INTEGER DEFAULT 50"),
+                ("trend_speed", "TEXT DEFAULT 'medium'"),
+                ("saturation_sng", "INTEGER DEFAULT 10"),
+                ("lifecycle_stage", "TEXT DEFAULT 'emerging'"),
+                ("created_by_admin", "TEXT"),
+                ("created_at", "TEXT DEFAULT ''"),
+                ("is_active", "INTEGER DEFAULT 1"),
+            ],
+        )
+        self.add_missing_columns(
+            "remixes",
+            [
+                ("user_id", "TEXT DEFAULT ''"),
+                ("trend_id", "TEXT DEFAULT ''"),
+                ("format", "TEXT DEFAULT 'auto'"),
+                ("result_payload", "TEXT DEFAULT '{}'"),
+                ("created_at", "TEXT DEFAULT ''"),
+            ],
+        )
+        self.add_missing_columns(
+            "user_points",
+            [
+                ("total_points", "INTEGER DEFAULT 0"),
+                ("updated_at", "TEXT DEFAULT ''"),
+            ],
+        )
+        self.add_missing_columns(
+            "user_achievements",
+            [
+                ("user_id", "TEXT DEFAULT ''"),
+                ("achievement_key", "TEXT DEFAULT ''"),
+                ("earned_at", "TEXT DEFAULT ''"),
+            ],
+        )
+        self.add_missing_columns(
+            "point_events",
+            [
+                ("user_id", "TEXT DEFAULT ''"),
+                ("event_type", "TEXT DEFAULT ''"),
+                ("points", "INTEGER DEFAULT 0"),
+                ("description", "TEXT DEFAULT ''"),
+                ("created_at", "TEXT DEFAULT ''"),
+            ],
+        )
+        self.backfill_schema_defaults()
+        self.remove_duplicate_achievements()
+
     def ensure_schema(self) -> None:
-        schema_statements = [
+        table_statements = [
             """
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -670,6 +873,36 @@ class Database:
                 created_at TEXT NOT NULL
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS user_points (
+                user_id TEXT PRIMARY KEY,
+                total_points INTEGER DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS user_achievements (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                achievement_key TEXT NOT NULL,
+                earned_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS point_events (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                points INTEGER NOT NULL,
+                description TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """,
+        ]
+        index_statements = [
             "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
             "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON auth_sessions(user_id)",
             "CREATE INDEX IF NOT EXISTS idx_analysis_user_id_created_at ON analysis_runs(user_id, created_at DESC)",
@@ -678,87 +911,26 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_admin_sessions_token_hash ON admin_sessions(token_hash)",
             "CREATE INDEX IF NOT EXISTS idx_admin_logs_run_id_created_at ON admin_analysis_logs(run_id, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_trends_lifecycle ON trends(lifecycle_stage, is_active, viral_score)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_achievements_unique ON user_achievements(user_id, achievement_key)",
+            "CREATE INDEX IF NOT EXISTS idx_point_events_user_created_at ON point_events(user_id, created_at DESC)",
         ]
 
         with self._lock:
-            for statement in schema_statements:
+            for statement in table_statements:
                 self.execute(statement)
-            self.seed_preview_trends()
+            self.migrate_schema()
+            for statement in index_statements:
+                self.execute(statement)
+            self.remove_seed_trends()
 
-    def seed_preview_trends(self) -> None:
-        existing = self.fetch_one("SELECT COUNT(*) AS total FROM trends")
-        if parse_int(existing.get("total") if existing else 0, 0) > 0:
-            return
-
-        created_at = iso_now()
-        preview_trends = [
-            (
-                "preview-founder-tabs",
-                "Вкладки браузера как честный разбор стратегии",
-                "Автор показывает 3-5 открытых вкладок и объясняет, что каждая говорит о текущем фокусе, ошибках и следующем шаге.",
-                "reels",
-                "стартапы, личный бренд, маркетинг",
-                "US",
-                "",
-                "",
-                "Цепляет конкретикой: зритель видит не общий совет, а реальный рабочий процесс автора.",
-                86,
-                "fast",
-                22,
-                "emerging",
-                "seed",
-                created_at,
-                1,
-            ),
-            (
-                "preview-receipt-ai",
-                "AI-разбор бытовой траты за 20 секунд",
-                "Короткий ролик превращает обычный чек, покупку или заказ в мини-кейс: что это говорит о привычках, бренде или рынке.",
-                "tiktok",
-                "финансы, lifestyle, образование",
-                "US",
-                "",
-                "",
-                "Формат легко адаптировать под разные ниши, а бытовой вход снижает порог внимания.",
-                79,
-                "medium",
-                18,
-                "underground",
-                "seed",
-                created_at,
-                1,
-            ),
-        ]
-
-        for trend in preview_trends:
-            existing_trend = self.fetch_one("SELECT id FROM trends WHERE id = ? LIMIT 1", (trend[0],))
-            if existing_trend:
-                continue
-
-            self.execute(
-                """
-                INSERT INTO trends (
-                    id,
-                    title,
-                    description,
-                    platform,
-                    niche,
-                    country_origin,
-                    source_url,
-                    video_preview_url,
-                    scout_comment,
-                    viral_score,
-                    trend_speed,
-                    saturation_sng,
-                    lifecycle_stage,
-                    created_by_admin,
-                    created_at,
-                    is_active
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                trend,
-            )
+    def remove_seed_trends(self) -> None:
+        self.execute(
+            """
+            DELETE FROM trends
+            WHERE created_by_admin = ?
+            """,
+            ("seed",),
+        )
 
     def ping(self) -> None:
         self.fetch_one("SELECT 1 AS ok")
@@ -1439,10 +1611,12 @@ def fetch_apify_items(profile_url: str, platform: str = "Instagram", username: s
             return json.loads(raw_body) if raw_body else []
     except error.HTTPError as exc:
         raw_error = exc.read().decode("utf-8", errors="replace")
+        upstream_status = exc.code
+        client_status = 429 if upstream_status == 429 else 502
         raise UpstreamServiceError(
-            "Не удалось получить данные профиля.",
-            exc.code,
-            raw_error or "Apify request failed.",
+            "Не удалось получить данные профиля через Apify. Проверьте ссылку, APIFY_TOKEN и actor id.",
+            client_status,
+            raw_error or f"Apify request failed with HTTP {upstream_status}.",
         ) from exc
     except error.URLError as exc:
         raise UpstreamServiceError(
@@ -2707,6 +2881,15 @@ def build_trend_filters(include_feed_rules: bool = False) -> tuple[str, list[Any
         conditions.append("lifecycle_stage = ?")
         params.append(lifecycle_stage)
 
+    active_state = str(flask_request.args.get("is_active", "")).strip().lower()
+    if active_state and active_state != "all" and not include_feed_rules:
+        if active_state in {"1", "true", "active"}:
+            conditions.append("is_active = 1")
+        elif active_state in {"0", "false", "inactive"}:
+            conditions.append("is_active = 0")
+        else:
+            raise ApiError("is_active is invalid.", 400)
+
     query = str(flask_request.args.get("q", "")).strip().lower()
     if query:
         like_query = f"%{query}%"
@@ -2816,6 +2999,209 @@ def get_trends_feed_payload() -> dict[str, Any]:
         "total": total,
         "page": page,
         "hasMore": offset + len(rows) < total,
+    }
+
+
+def get_gap_opportunities_payload() -> dict[str, Any]:
+    db = get_database()
+    where_clause = """
+        saturation_sng < 30
+        AND viral_score > 60
+        AND lifecycle_stage IN ('emerging', 'breakout')
+        AND is_active = 1
+    """
+    total_row = db.fetch_one(f"SELECT COUNT(*) AS total FROM trends WHERE {where_clause}")
+    rows = db.fetch_all(
+        f"""
+        SELECT *
+        FROM trends
+        WHERE {where_clause}
+        ORDER BY (viral_score - saturation_sng) DESC, viral_score DESC, created_at DESC
+        LIMIT 6
+        """
+    )
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        opportunity_score = parse_int(row.get("viral_score"), 0) - parse_int(row.get("saturation_sng"), 0)
+        payload = trend_to_payload(row)
+        predicted_breakout = "2-4 недели" if payload["lifecycleStage"] == "emerging" else "Уже происходит"
+        payload["opportunityScore"] = opportunity_score
+        payload["opportunity_score"] = opportunity_score
+        payload["predictedBreakout"] = predicted_breakout
+        payload["predicted_breakout"] = predicted_breakout
+        items.append(payload)
+
+    return {
+        "items": items,
+        "total": parse_int(total_row.get("total") if total_row else 0, 0),
+    }
+
+
+def count_user_analyses(db: Database, user_id: str) -> int:
+    row = db.fetch_one("SELECT COUNT(*) AS total FROM analysis_runs WHERE user_id = ?", (user_id,))
+    return parse_int(row.get("total") if row else 0, 0)
+
+
+def count_user_remixes(db: Database, user_id: str) -> int:
+    row = db.fetch_one("SELECT COUNT(*) AS total FROM remixes WHERE user_id = ?", (user_id,))
+    return parse_int(row.get("total") if row else 0, 0)
+
+
+def achievement_to_payload(achievement_key: str, earned_at: str) -> dict[str, Any] | None:
+    achievement = ACHIEVEMENTS.get(achievement_key)
+    if not achievement:
+        return None
+    label, description, icon = achievement
+    return {
+        "key": achievement_key,
+        "label": label,
+        "description": description,
+        "icon": icon,
+        "earnedAt": earned_at,
+    }
+
+
+def rank_to_payload(rank: tuple[int, str, str]) -> dict[str, Any]:
+    _threshold, label, icon = rank
+    return {"label": label, "icon": icon}
+
+
+def award_points(db: Database, user_id: str, event_type: str) -> list[dict[str, Any]]:
+    event_definition = POINT_EVENTS.get(event_type)
+    if not event_definition:
+        raise ApiError("Point event type is invalid.", 400)
+
+    points, description = event_definition
+    created_at = iso_now()
+    db.execute(
+        """
+        INSERT INTO point_events (id, user_id, event_type, points, description, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (str(uuid.uuid4()), user_id, event_type, points, description, created_at),
+    )
+
+    existing_points = db.fetch_one("SELECT user_id FROM user_points WHERE user_id = ? LIMIT 1", (user_id,))
+    if not existing_points:
+        db.execute(
+            "INSERT INTO user_points (user_id, total_points, updated_at) VALUES (?, ?, ?)",
+            (user_id, 0, created_at),
+        )
+    db.execute(
+        "UPDATE user_points SET total_points = total_points + ?, updated_at = ? WHERE user_id = ?",
+        (points, created_at, user_id),
+    )
+
+    analysis_count = count_user_analyses(db, user_id)
+    remix_count = count_user_remixes(db, user_id)
+    achievement_conditions = {
+        "first_blood": analysis_count == 1,
+        "trend_hunter": analysis_count >= 10,
+        "remix_master": remix_count >= 5,
+    }
+
+    newly_earned: list[dict[str, Any]] = []
+    for achievement_key, is_earned in achievement_conditions.items():
+        if not is_earned:
+            continue
+        already_earned = db.fetch_one(
+            """
+            SELECT id
+            FROM user_achievements
+            WHERE user_id = ? AND achievement_key = ?
+            LIMIT 1
+            """,
+            (user_id, achievement_key),
+        )
+        if already_earned:
+            continue
+
+        earned_at = iso_now()
+        db.execute(
+            """
+            INSERT INTO user_achievements (id, user_id, achievement_key, earned_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (str(uuid.uuid4()), user_id, achievement_key, earned_at),
+        )
+        payload = achievement_to_payload(achievement_key, earned_at)
+        if payload:
+            newly_earned.append(payload)
+
+    return newly_earned
+
+
+def get_user_rank(total_points: int) -> tuple[tuple[int, str, str], tuple[int, str, str] | None]:
+    current_rank = RANK_THRESHOLDS[0]
+    next_rank: tuple[int, str, str] | None = None
+
+    for index, rank in enumerate(RANK_THRESHOLDS):
+        threshold = rank[0]
+        if total_points >= threshold:
+            current_rank = rank
+            next_rank = RANK_THRESHOLDS[index + 1] if index + 1 < len(RANK_THRESHOLDS) else None
+
+    return current_rank, next_rank
+
+
+def get_user_stats_payload(user_id: str) -> dict[str, Any]:
+    db = get_database()
+    points_row = db.fetch_one("SELECT total_points FROM user_points WHERE user_id = ? LIMIT 1", (user_id,))
+    total_points = parse_int(points_row.get("total_points") if points_row else 0, 0)
+    current_rank, next_rank = get_user_rank(total_points)
+
+    achievement_rows = db.fetch_all(
+        """
+        SELECT achievement_key, earned_at
+        FROM user_achievements
+        WHERE user_id = ?
+        ORDER BY earned_at DESC
+        """,
+        (user_id,),
+    )
+    achievements = [
+        payload
+        for payload in (
+            achievement_to_payload(row["achievement_key"], row["earned_at"]) for row in achievement_rows
+        )
+        if payload
+    ]
+
+    event_rows = db.fetch_all(
+        """
+        SELECT event_type, points, description, created_at
+        FROM point_events
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 5
+        """,
+        (user_id,),
+    )
+
+    next_rank_payload = None
+    if next_rank:
+        _threshold, label, icon = next_rank
+        next_rank_payload = {
+            "label": label,
+            "icon": icon,
+            "pointsNeeded": max(_threshold - total_points, 0),
+        }
+
+    return {
+        "points": total_points,
+        "rank": rank_to_payload(current_rank),
+        "nextRank": next_rank_payload,
+        "achievements": achievements,
+        "recentEvents": [
+            {
+                "eventType": row["event_type"],
+                "points": parse_int(row.get("points"), 0),
+                "description": row["description"],
+                "createdAt": row["created_at"],
+            }
+            for row in event_rows
+        ],
     }
 
 
@@ -3006,8 +3392,9 @@ def create_trend_remix(trend_id: str, user: dict[str, Any], payload: dict[str, A
     remix_result, analysis_model = generate_remix_result(remix_prompt)
     remix_id = str(uuid.uuid4())
     created_at = iso_now()
+    db = get_database()
 
-    get_database().execute(
+    db.execute(
         """
         INSERT INTO remixes (id, user_id, trend_id, format, result_payload, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -3021,6 +3408,7 @@ def create_trend_remix(trend_id: str, user: dict[str, Any], payload: dict[str, A
             created_at,
         ),
     )
+    new_achievements = award_points(db, user["id"], "REMIX_CREATED")
 
     return {
         "id": remix_id,
@@ -3029,7 +3417,46 @@ def create_trend_remix(trend_id: str, user: dict[str, Any], payload: dict[str, A
         "result": remix_result,
         "createdAt": created_at,
         "analysisModel": analysis_model,
+        "newAchievements": new_achievements,
     }
+
+
+def get_user_remixes_payload(user_id: str) -> dict[str, Any]:
+    rows = get_database().fetch_all(
+        """
+        SELECT
+            remixes.id,
+            remixes.trend_id,
+            remixes.format,
+            remixes.result_payload,
+            remixes.created_at,
+            trends.title AS trend_title,
+            trends.platform AS trend_platform
+        FROM remixes
+        LEFT JOIN trends ON trends.id = remixes.trend_id
+        WHERE remixes.user_id = ?
+        ORDER BY remixes.created_at DESC
+        LIMIT 30
+        """,
+        (user_id,),
+    )
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        result = as_dict(safe_json_loads(row.get("result_payload"), {}))
+        items.append(
+            {
+                "id": row["id"],
+                "trendId": row["trend_id"],
+                "trendTitle": row.get("trend_title") or "Удаленный тренд",
+                "trendPlatform": row.get("trend_platform") or "",
+                "format": row["format"],
+                "result": result,
+                "createdAt": row["created_at"],
+            }
+        )
+
+    return {"items": items, "total": len(items)}
 
 
 def emit_admin_realtime(event_name: str, payload: dict[str, Any]) -> None:
@@ -3286,12 +3713,33 @@ def register_routes(app: Flask) -> None:
             raise ApiError("Analysis not found.", 404)
         return jsonify(analysis_run)
 
+    @app.route("/user/stats", methods=["GET", "OPTIONS"])
+    def user_stats():
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+        user = get_current_user()
+        return jsonify(get_user_stats_payload(user["id"]))
+
+    @app.route("/remixes", methods=["GET", "OPTIONS"])
+    def user_remixes():
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+        user = get_current_user()
+        return jsonify(get_user_remixes_payload(user["id"]))
+
     @app.route("/trends/feed", methods=["GET", "OPTIONS"])
     def trends_feed():
         if flask_request.method == "OPTIONS":
             return ("", 204)
         get_current_user()
         return jsonify(get_trends_feed_payload())
+
+    @app.route("/trends/gap-opportunities", methods=["GET", "OPTIONS"])
+    def trend_gap_opportunities():
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+        get_current_user()
+        return jsonify(get_gap_opportunities_payload())
 
     @app.route("/trends/<trend_id>/remix", methods=["POST", "OPTIONS"])
     def trend_remix(trend_id: str):
@@ -3338,6 +3786,9 @@ def register_routes(app: Flask) -> None:
         account = normalize_account(items, profile_url, niche, target.platform, target.username)
         analysis, sources, analysis_model = generate_analysis(account, niche)
         run_id = save_analysis(user["id"], profile_url, niche, account, analysis, sources)
+        db = get_database()
+        event_type = "FIRST_ANALYSIS" if count_user_analyses(db, user["id"]) == 1 else "ANALYSIS_DONE"
+        new_achievements = award_points(db, user["id"], event_type)
 
         return jsonify(
             {
@@ -3348,6 +3799,7 @@ def register_routes(app: Flask) -> None:
                 "createdAt": iso_now(),
                 "analysisModel": analysis_model,
                 "cached": False,
+                "newAchievements": new_achievements,
             }
         )
 

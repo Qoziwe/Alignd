@@ -1,19 +1,7 @@
 import {useState} from 'react';
 import RemixModal from './RemixModal';
-
-export type TrendLifecycle = 'underground' | 'emerging' | 'breakout';
-export type TrendPlatform = 'TikTok' | 'Instagram' | 'Reels' | 'Shorts';
-
-export type TrendCardData = {
-  id: string;
-  lifecycle: TrendLifecycle;
-  platform: TrendPlatform;
-  viral_score: number;
-  title: string;
-  description: string;
-  saturation_sng: number;
-  country_origin: string;
-};
+import type {TrendCardData, TrendLifecycle, TrendPlatform} from '../lib/trends';
+export type {TrendCardData, TrendLifecycle, TrendPlatform} from '../lib/trends';
 
 type TrendCardProps = {
   trend: TrendCardData;

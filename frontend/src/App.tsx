@@ -1,23 +1,31 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
   ArrowLeft,
   BarChart3,
   CalendarDays,
+  Circle,
+  Clapperboard,
   Flame,
   Heart,
   Lightbulb,
   LogOut,
   Mail,
+  SearchCheck,
   Shield,
   Sparkles,
+  Target,
   Trash2,
   TrendingUp,
+  Trophy,
   UserRound,
   Zap,
 } from 'lucide-react';
+import type {LucideIcon} from 'lucide-react';
 import heroLiquid from '../assets/image.png';
 import {COOKIE_SESSION_MARKER} from './lib/auth';
 import ViralRadar from './components/ViralRadar';
+import ViralGap from './components/ViralGap';
+import AchievementToast from './components/AchievementToast';
 import {API_BASE_URL, ApiRequestError, fetchJson} from './lib/api';
 import {
   extractUsername,
@@ -97,6 +105,7 @@ type AnalysisResponse = {
   analysisModel?: string;
   niche?: string;
   cached: boolean;
+  newAchievements?: UserAchievementSummary[];
 };
 
 type AnalysisHistoryItem = {
@@ -106,6 +115,53 @@ type AnalysisHistoryItem = {
   niche: string;
   compatibilityScore: number | null;
   createdAt: string;
+};
+
+type UserAchievement = {
+  key: string;
+  label: string;
+  description: string;
+  icon: string;
+  earnedAt: string;
+};
+
+type UserAchievementSummary = {
+  label: string;
+  icon: string;
+};
+
+type RemixHistoryItem = {
+  id: string;
+  trendId: string;
+  trendTitle: string;
+  trendPlatform: string;
+  format: string;
+  result: {
+    hook?: string;
+    thumbnailText?: string;
+    hashtags?: string[];
+  };
+  createdAt: string;
+};
+
+type UserStats = {
+  points: number;
+  rank: {
+    label: string;
+    icon: string;
+  };
+  nextRank: {
+    label: string;
+    icon: string;
+    pointsNeeded: number;
+  } | null;
+  achievements: UserAchievement[];
+  recentEvents: Array<{
+    eventType: string;
+    points: number;
+    description: string;
+    createdAt: string;
+  }>;
 };
 
 const shellContainerClass = 'mx-auto w-full max-w-[1184px] px-4 sm:px-6 lg:px-8';
@@ -123,6 +179,18 @@ const primaryButtonClass =
   'inline-flex h-[54px] items-center justify-center rounded-xl bg-[#ECECEC] px-6 text-[16px] font-bold text-black transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-70 sm:h-[58px] sm:px-8';
 const secondaryButtonClass =
   'inline-flex h-[48px] items-center justify-center gap-3 rounded-xl border border-white/14 bg-white/6 px-5 text-[15px] font-semibold text-gray-100 transition-colors hover:bg-white/10';
+const rankThresholds = [
+  {points: 0, label: 'Новичок'},
+  {points: 200, label: 'Охотник'},
+  {points: 500, label: 'Трендсеттер'},
+];
+const progressIcons: Record<string, LucideIcon> = {
+  circle: Circle,
+  target: Target,
+  trophy: Trophy,
+  'search-check': SearchCheck,
+  clapperboard: Clapperboard,
+};
 
 function LoadingAtom() {
   return (
@@ -208,6 +276,11 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState('');
   const [history, setHistory] = useState<AnalysisHistoryItem[]>([]);
+  const [remixHistory, setRemixHistory] = useState<RemixHistoryItem[]>([]);
+  const [remixHistoryLoading, setRemixHistoryLoading] = useState(false);
+  const [userStats, setUserStats] = useState<UserStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [currentAchievement, setCurrentAchievement] = useState<{label: string; icon: string} | null>(null);
   const [report, setReport] = useState<AnalysisResponse | null>(null);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [url, setUrl] = useState('');
@@ -215,6 +288,7 @@ export default function App() {
   const [isAdviceExpanded, setIsAdviceExpanded] = useState(false);
   const [preloaderMode, setPreloaderMode] = useState<PreloaderMode>(null);
   const formSectionRef = useRef<HTMLDivElement | null>(null);
+  const userStatsRef = useRef<UserStats | null>(null);
 
   const isResults = screen === 'results';
   const primaryIdea = report?.analysis.ideas[0];
@@ -234,6 +308,24 @@ export default function App() {
         )
       : 0;
   const latestAnalysisDate = history[0]?.createdAt ? formatAnalysisDate(history[0].createdAt) : 'Пока нет';
+  const currentRankThreshold =
+    rankThresholds.find((rank) => rank.label === userStats?.rank.label)?.points ?? 0;
+  const nextRankThreshold = userStats?.nextRank
+    ? userStats.points + userStats.nextRank.pointsNeeded
+    : null;
+  const rankProgress =
+    userStats && nextRankThreshold !== null
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            ((userStats.points - currentRankThreshold) /
+              Math.max(nextRankThreshold - currentRankThreshold, 1)) *
+              100,
+          ),
+        )
+      : 100;
+  const RankIcon = progressIcons[userStats?.rank.icon || 'circle'] || Circle;
 
   const loadHistory = async () => {
     setHistoryLoading(true);
@@ -248,6 +340,60 @@ export default function App() {
       setHistoryLoading(false);
     }
   };
+
+  const loadUserStats = useCallback(async (showNewAchievements = false) => {
+    setStatsLoading(true);
+
+    try {
+      const payload = await fetchJson<UserStats>(`${API_BASE_URL}/user/stats`);
+      const previousAchievements = new Set(
+        (userStatsRef.current?.achievements || []).map((achievement) => achievement.key),
+      );
+
+      if (showNewAchievements) {
+        const newAchievement = payload.achievements.find(
+          (achievement) => !previousAchievements.has(achievement.key),
+        );
+
+        if (newAchievement) {
+          setCurrentAchievement(null);
+          window.setTimeout(
+            () => setCurrentAchievement({label: newAchievement.label, icon: newAchievement.icon}),
+            0,
+          );
+        }
+      }
+
+      userStatsRef.current = payload;
+      setUserStats(payload);
+    } catch {
+      userStatsRef.current = null;
+      setUserStats(null);
+    } finally {
+      setStatsLoading(false);
+    }
+  }, []);
+
+  const showAchievement = useCallback((achievement: UserAchievementSummary | null | undefined) => {
+    if (!achievement) {
+      return;
+    }
+
+    setCurrentAchievement(null);
+    window.setTimeout(() => setCurrentAchievement({label: achievement.label, icon: achievement.icon}), 0);
+  }, []);
+
+  const loadRemixHistory = useCallback(async () => {
+    setRemixHistoryLoading(true);
+    try {
+      const payload = await fetchJson<{items: RemixHistoryItem[]}>(`${API_BASE_URL}/remixes`);
+      setRemixHistory(payload.items);
+    } catch {
+      setRemixHistory([]);
+    } finally {
+      setRemixHistoryLoading(false);
+    }
+  }, []);
 
   const openSavedAnalysis = async (analysisId: string) => {
     if (!token) {
@@ -278,6 +424,7 @@ export default function App() {
       .then((payload) => {
         setToken(COOKIE_SESSION_MARKER);
         setUser(payload.user);
+        void loadUserStats(false);
         return loadHistory();
       })
       .catch((error) => {
@@ -292,7 +439,7 @@ export default function App() {
       .finally(() => {
         setAuthLoading(false);
       });
-  }, []);
+  }, [loadUserStats]);
 
   useEffect(() => {
     setAvatarLoadFailed(false);
@@ -303,6 +450,42 @@ export default function App() {
       window.scrollTo({top: 0, left: 0, behavior: 'auto'});
     });
   }, [screen]);
+
+  useEffect(() => {
+    if (screen === 'profile' && user) {
+      void loadUserStats(false);
+      void loadRemixHistory();
+    }
+  }, [screen, user, loadRemixHistory, loadUserStats]);
+
+  useEffect(() => {
+    if (!currentAchievement) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => setCurrentAchievement(null), 4600);
+    return () => window.clearTimeout(timer);
+  }, [currentAchievement]);
+
+  useEffect(() => {
+    const handleAchievement = (event: Event) => {
+      const achievement = (event as CustomEvent<UserAchievementSummary>).detail;
+      showAchievement(achievement);
+      void loadUserStats(false);
+      void loadRemixHistory();
+    };
+    const handleRemixCreated = () => {
+      void loadUserStats(false);
+      void loadRemixHistory();
+    };
+
+    window.addEventListener('ooppssie:achievement-unlocked', handleAchievement);
+    window.addEventListener('ooppssie:remix-created', handleRemixCreated);
+    return () => {
+      window.removeEventListener('ooppssie:achievement-unlocked', handleAchievement);
+      window.removeEventListener('ooppssie:remix-created', handleRemixCreated);
+    };
+  }, [loadRemixHistory, loadUserStats, showAchievement]);
 
   const scrollToForm = () => {
     formSectionRef.current?.scrollIntoView({
@@ -335,6 +518,7 @@ export default function App() {
       setPassword('');
       setAuthMode('login');
       await loadHistory();
+      await loadUserStats(false);
       scrollToForm();
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : 'Не удалось выполнить вход.');
@@ -359,6 +543,10 @@ export default function App() {
     setToken('');
     setUser(null);
     setHistory([]);
+    setRemixHistory([]);
+    userStatsRef.current = null;
+    setUserStats(null);
+    setCurrentAchievement(null);
     setReport(null);
     setScreen('home');
     setAnalysisError('');
@@ -434,7 +622,9 @@ export default function App() {
       setReport(payload);
       setScreen('results');
       setPreloaderMode(null);
+      showAchievement(payload.newAchievements?.[0]);
       await loadHistory();
+      await loadUserStats(false);
     } catch (error) {
       setAnalysisError(error instanceof Error ? error.message : 'Не удалось выполнить анализ.');
       setScreen('home');
@@ -449,6 +639,12 @@ export default function App() {
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-x-hidden bg-[#050507] font-sans text-white selection:bg-white/20">
+      {currentAchievement && (
+        <AchievementToast
+          key={`${currentAchievement.label}-${currentAchievement.icon}`}
+          achievement={currentAchievement}
+        />
+      )}
       <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
         {isResults ? (
           <>
@@ -575,6 +771,7 @@ export default function App() {
             </section>
 
             {user && <ViralRadar isAuthenticated={Boolean(user)} />}
+            {user && <ViralGap />}
 
             {!user && !authLoading && (
               <section className={`${cardClass} mt-10 backdrop-blur-md sm:mt-12`}>
@@ -811,6 +1008,167 @@ export default function App() {
                   Выйти
                 </button>
               </div>
+            </section>
+
+            <section className={`${solidCardClass} mt-6`}>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-[22px] font-black tracking-[0] text-white sm:text-[24px]">Твой прогресс</h2>
+                  <p className="mt-2 text-[15px] text-gray-400">Очки, ранги и достижения за работу с трендами.</p>
+                </div>
+                {statsLoading && <div className="text-sm text-gray-400">Обновляем...</div>}
+              </div>
+
+              {userStats ? (
+                <div className="mt-6 space-y-6">
+                  <div className="rounded-[16px] border border-white/10 bg-black/20 p-5 sm:p-6">
+                    <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-white/6 text-[var(--color-accent-primary)]">
+                          <RankIcon size={28} />
+                        </div>
+                        <div>
+                          <div className="text-[13px] font-semibold uppercase text-gray-500">Ранг</div>
+                          <div className="mt-1 text-[22px] font-black text-white">{userStats.rank.label}</div>
+                        </div>
+                      </div>
+                      <div className="bg-gradient-to-r from-[#e840a8] to-[#a855f7] bg-clip-text text-[30px] font-black leading-none text-transparent sm:text-[34px]">
+                        {userStats.points} очков
+                      </div>
+                    </div>
+
+                    <div className="mt-6">
+                      <div className="h-[6px] overflow-hidden rounded-full bg-white/10">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-[#e840a8] to-[#a855f7]"
+                          style={{width: `${rankProgress}%`}}
+                        />
+                      </div>
+                      {userStats.nextRank ? (
+                        <div className="mt-3 text-[13px] text-gray-400">
+                          ещё {userStats.nextRank.pointsNeeded} очков до {userStats.nextRank.label}
+                        </div>
+                      ) : (
+                        <div className="mt-3 text-[13px] text-gray-400">Максимальный ранг достигнут</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-[16px] font-bold text-white">Достижения</h3>
+                    {userStats.achievements.length > 0 ? (
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        {userStats.achievements.map((achievement) => {
+                          const AchievementIcon = progressIcons[achievement.icon] || Target;
+                          return (
+                            <article
+                              key={achievement.key}
+                              className="rounded-[14px] border border-[var(--color-border-default)] bg-[rgba(168,85,247,0.06)] p-[14px]"
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[rgba(168,85,247,0.1)] text-[var(--color-accent-secondary)]" aria-hidden="true">
+                                  <AchievementIcon size={18} />
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="text-[13px] font-semibold text-white">{achievement.label}</div>
+                                  <div className="mt-1 text-[12px] leading-[1.35] text-gray-400">
+                                    {achievement.description}
+                                  </div>
+                                  <div className="mt-2 text-[11px] text-gray-500">
+                                    {formatAnalysisDate(achievement.earnedAt)}
+                                  </div>
+                                </div>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="mt-3 text-[14px] text-gray-400">Достижения появятся после первых действий.</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <h3 className="text-[16px] font-bold text-white">Последние события</h3>
+                    {userStats.recentEvents.length > 0 ? (
+                      <div className="mt-3 divide-y divide-white/10 rounded-[14px] border border-white/10 bg-black/20">
+                        {userStats.recentEvents.map((event, index) => (
+                          <div
+                            key={`${event.eventType}-${event.createdAt}-${index}`}
+                            className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-[14px] font-black text-[#86efac]">+{event.points}</span>
+                              <span className="text-[14px] text-gray-200">{event.description}</span>
+                            </div>
+                            <span className="text-[12px] text-gray-500">{formatAnalysisDate(event.createdAt)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-3 text-[14px] text-gray-400">Событий пока нет.</p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-6 rounded-[16px] border border-white/10 bg-black/20 p-5 text-[14px] text-gray-400">
+                  {statsLoading ? 'Загружаем прогресс...' : 'Прогресс пока пуст.'}
+                </div>
+              )}
+            </section>
+
+            <section className={`${solidCardClass} mt-6`}>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-[22px] font-black tracking-[0] text-white sm:text-[24px]">История Remix</h2>
+                  <p className="mt-2 text-[15px] text-gray-400">Последние адаптации трендов, которые ты уже сгенерировал.</p>
+                </div>
+                {remixHistoryLoading && <div className="text-sm text-gray-400">Обновляем...</div>}
+              </div>
+
+              {remixHistory.length > 0 ? (
+                <div className="mt-5 grid gap-3 md:grid-cols-2">
+                  {remixHistory.map((remix) => (
+                    <article
+                      key={remix.id}
+                      className="rounded-[16px] border border-white/10 bg-black/20 px-4 py-4 sm:px-5 sm:py-5"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="truncate text-[16px] font-bold text-white" title={remix.trendTitle}>
+                            {remix.trendTitle}
+                          </div>
+                          <div className="mt-1 text-[12px] uppercase text-gray-500">
+                            {remix.trendPlatform || 'trend'} / {remix.format}
+                          </div>
+                        </div>
+                        <div className="shrink-0 text-[12px] text-gray-500">{formatAnalysisDate(remix.createdAt)}</div>
+                      </div>
+                      {remix.result.hook && (
+                        <div className="mt-4 rounded-[12px] border-l-[3px] border-l-[#e840a8] bg-[rgba(232,64,168,0.06)] px-4 py-3 text-[14px] font-semibold leading-[1.4] text-gray-100">
+                          {remix.result.hook}
+                        </div>
+                      )}
+                      {remix.result.hashtags && remix.result.hashtags.length > 0 && (
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {remix.result.hashtags.slice(0, 6).map((tag) => (
+                            <span
+                              key={tag}
+                              className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-[12px] text-gray-400"
+                            >
+                              #{tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-5 text-[15px] text-gray-400">
+                  {remixHistoryLoading ? 'Загружаем историю...' : 'Истории Remix пока нет.'}
+                </p>
+              )}
             </section>
 
             <section className="mt-6 grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-3">

@@ -1,24 +1,21 @@
-import {useEffect, useState} from 'react';
+import {useEffect, useMemo, useState} from 'react';
 import {Radio} from 'lucide-react';
-import ooppssieMaskot from '../../assets/ooppssieMaskot.png';
-import {API_BASE_URL} from '../lib/api';
-import TrendCard, {type TrendCardData, type TrendPlatform} from './TrendCard';
+import {API_BASE_URL, fetchJson} from '../lib/api';
+import {
+  apiTrendToCardData,
+  parseTrendFilterValue,
+  trendFilterParam,
+  type ApiTrend,
+  type ApiTrendPlatform,
+  type TrendCardData,
+  type TrendFilterValue,
+} from '../lib/trends';
+import TrendCard from './TrendCard';
+import Upsee from './Upsee';
 
-type ApiTrendPlatform = 'tiktok' | 'instagram' | 'reels' | 'shorts' | 'youtube_shorts';
 type TrendFilter = {
   label: string;
-  value: 'all' | ApiTrendPlatform;
-};
-
-type ApiTrend = {
-  id: string;
-  title: string;
-  description: string;
-  platform: ApiTrendPlatform;
-  countryOrigin: string;
-  viralScore: number;
-  saturationSng: number;
-  lifecycleStage: TrendCardData['lifecycle'];
+  value: TrendFilterValue;
 };
 
 type FeedResponse = {
@@ -33,27 +30,27 @@ const filters: TrendFilter[] = [
   {label: 'Shorts', value: 'youtube_shorts'},
 ];
 
-const platformLabels: Record<ApiTrendPlatform, TrendPlatform> = {
-  tiktok: 'TikTok',
-  instagram: 'Instagram',
-  reels: 'Reels',
-  shorts: 'Shorts',
-  youtube_shorts: 'Shorts',
-};
+function readFilterFromUrl() {
+  if (typeof window === 'undefined') {
+    return filters[0];
+  }
 
-type UpseeProps = {
-  mood: 'sleeping';
-};
+  const value = parseTrendFilterValue(new URLSearchParams(window.location.search).get(trendFilterParam));
+  return filters.find((filter) => filter.value === value) || filters[0];
+}
 
-function Upsee({mood}: UpseeProps) {
-  return (
-    <div className="relative flex h-28 w-28 items-center justify-center" aria-label={`Upsee ${mood}`}>
-      <img src={ooppssieMaskot} alt="" className="h-full w-full object-contain opacity-80" />
-      <span className="absolute right-1 top-1 text-[22px]" aria-hidden="true">
-        zzz
-      </span>
-    </div>
-  );
+function syncFilterToUrl(value: TrendFilterValue) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  if (value === 'all') {
+    url.searchParams.delete(trendFilterParam);
+  } else {
+    url.searchParams.set(trendFilterParam, value);
+  }
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
 type ViralRadarProps = {
@@ -61,50 +58,36 @@ type ViralRadarProps = {
 };
 
 export default function ViralRadar({isAuthenticated = true}: ViralRadarProps) {
-  const [activeFilter, setActiveFilter] = useState<TrendFilter>(filters[0]);
+  const [activeFilter, setActiveFilter] = useState<TrendFilter>(() => readFilterFromUrl());
   const [trends, setTrends] = useState<TrendCardData[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  const activePlatform = useMemo(
+    () => (activeFilter.value === 'all' ? null : (activeFilter.value as ApiTrendPlatform)),
+    [activeFilter.value],
+  );
+
+  useEffect(() => {
+    syncFilterToUrl(activeFilter.value);
+  }, [activeFilter.value]);
 
   useEffect(() => {
     const controller = new AbortController();
     const params = new URLSearchParams({per_page: '12'});
 
-    if (activeFilter.value !== 'all') {
-      params.set('platform', activeFilter.value);
+    if (activePlatform) {
+      params.set('platform', activePlatform);
     }
 
     setLoading(true);
     setErrorMessage('');
 
-    fetch(`${API_BASE_URL}/trends/feed?${params.toString()}`, {
-      credentials: 'include',
+    fetchJson<FeedResponse>(`${API_BASE_URL}/trends/feed?${params.toString()}`, {
       signal: controller.signal,
     })
-      .then(async (response) => {
-        const payload = await response.json().catch(() => null);
-        if (!response.ok) {
-          throw new Error(
-            payload && typeof payload === 'object' && typeof (payload as {error?: unknown}).error === 'string'
-              ? (payload as {error: string}).error
-              : 'Не удалось загрузить тренды.',
-          );
-        }
-        return payload as FeedResponse;
-      })
       .then((payload) => {
-        setTrends(
-          payload.items.map((trend) => ({
-            id: trend.id,
-            lifecycle: trend.lifecycleStage,
-            platform: platformLabels[trend.platform],
-            viral_score: trend.viralScore,
-            title: trend.title,
-            description: trend.description,
-            saturation_sng: trend.saturationSng,
-            country_origin: trend.countryOrigin,
-          })),
-        );
+        setTrends(payload.items.map(apiTrendToCardData));
       })
       .catch((error) => {
         if (error instanceof DOMException && error.name === 'AbortError') {
@@ -120,7 +103,7 @@ export default function ViralRadar({isAuthenticated = true}: ViralRadarProps) {
       });
 
     return () => controller.abort();
-  }, [activeFilter]);
+  }, [activePlatform]);
 
   return (
     <section className="mt-12 sm:mt-14 lg:mt-16">
@@ -179,7 +162,7 @@ export default function ViralRadar({isAuthenticated = true}: ViralRadarProps) {
 
       {!loading && !errorMessage && trends.length === 0 && (
         <div className="flex min-h-[260px] flex-col items-center justify-center rounded-[20px] border border-[var(--color-border-default)] bg-[rgba(14,13,20,0.68)] p-8 text-center">
-          <Upsee mood="sleeping" />
+          <Upsee mood="sleeping" size={112} />
           <p className="mt-4 max-w-[360px] text-[15px] leading-[1.5] text-[var(--color-text-muted)]">
             Скаутеры уже в работе. Тренды скоро появятся здесь
           </p>

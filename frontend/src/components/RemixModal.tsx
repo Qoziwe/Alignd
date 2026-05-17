@@ -12,8 +12,8 @@ import {
   Smile,
   X,
 } from 'lucide-react';
-import ooppssieMaskot from '../../assets/ooppssieMaskot.png';
 import {API_BASE_URL, fetchJson} from '../lib/api';
+import Upsee from './Upsee';
 
 type RemixFormat = 'expert_blog' | 'humor' | 'faceless' | 'storytelling' | 'educational';
 type ModalMode = 'format' | 'loading' | 'result' | 'error';
@@ -36,6 +36,7 @@ type RemixResponse = {
   result: RemixResult;
   createdAt: string;
   analysisModel: string;
+  newAchievements?: Array<{label: string; icon: string}>;
 };
 
 type RemixModalProps = {
@@ -51,14 +52,6 @@ const formatOptions: Array<{value: RemixFormat; label: string; icon: typeof Grad
   {value: 'storytelling', label: 'История', icon: ScrollText, className: 'sm:col-span-2'},
   {value: 'educational', label: 'Обучение', icon: BookOpen, className: 'sm:col-span-2'},
 ];
-
-function UpseeThinking() {
-  return (
-    <div className="flex h-[90px] w-[90px] items-center justify-center" aria-label="Upsee thinking">
-      <img src={ooppssieMaskot} alt="" className="h-full w-full object-contain opacity-90" />
-    </div>
-  );
-}
 
 function formatPlan(result: RemixResult) {
   return [
@@ -110,6 +103,14 @@ export default function RemixModal({trendId, trendTitle, onClose}: RemixModalPro
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({format}),
         });
+        if (payload.newAchievements?.length) {
+          window.dispatchEvent(
+            new CustomEvent('ooppssie:achievement-unlocked', {
+              detail: payload.newAchievements[0],
+            }),
+          );
+        }
+        window.dispatchEvent(new CustomEvent('ooppssie:remix-created'));
         setResult(payload.result);
         setMode('result');
       } catch (error) {
@@ -191,7 +192,7 @@ export default function RemixModal({trendId, trendTitle, onClose}: RemixModalPro
 
         {mode === 'loading' && (
           <div className="flex min-h-[300px] flex-col items-center justify-center text-center">
-            <UpseeThinking />
+            <Upsee mood="thinking" size={90} />
             <p className="mt-5 text-[15px] text-[var(--color-text-muted)]">Upsee адаптирует тренд под тебя...</p>
             <div className="simple-loader-line mt-5 w-full max-w-[240px]">
               <span></span>

@@ -1,5 +1,6 @@
 from io import BytesIO
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,12 +13,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import (
     UpstreamServiceError,
     AppConfig,
+    award_points,
     call_gemini_generate,
     clamp_score,
     create_app,
     ensure_analysis_shape,
+    fetch_apify_items,
+    get_database,
     infer_compatibility_score,
     parse_json_response_text,
+    save_analysis,
 )
 
 
@@ -101,6 +106,53 @@ class BackendApiTests(unittest.TestCase):
             [{"title": "Source", "url": "https://example.com"}],
             "gemini-2.5-flash-lite",
         )
+
+    def test_schema_migrates_existing_trends_table(self):
+        database_path = Path(self.temp_dir.name) / "legacy-trends.db"
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                """
+                CREATE TABLE trends (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    platform TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO trends (id, title, description, platform)
+                VALUES (?, ?, ?, ?)
+                """,
+                ("legacy-trend", "Legacy", "Old trend row", "tiktok"),
+            )
+
+        app = create_app(
+            {
+                "APP_ENV": "development",
+                "DATABASE_URL": f"sqlite:///{database_path}",
+                "SECRET_KEY": "test-secret",
+                "FRONTEND_ORIGIN": "http://127.0.0.1:3000",
+                "ADMIN_USERNAME": "Lekim",
+                "ADMIN_PASSWORD": "002qrwaim11",
+            }
+        )
+
+        with app.app_context():
+            db = get_database()
+            columns = db.table_columns("trends")
+            self.assertIn("is_active", columns)
+            self.assertIn("lifecycle_stage", columns)
+            self.assertIn("saturation_sng", columns)
+            self.assertIn("video_preview_url", columns)
+
+            row = db.fetch_one("SELECT * FROM trends WHERE id = ?", ("legacy-trend",))
+            self.assertIsNotNone(row)
+            self.assertEqual(row["is_active"], 1)
+            self.assertEqual(row["lifecycle_stage"], "emerging")
+            self.assertEqual(row["saturation_sng"], 10)
+            self.assertEqual(row["country_origin"], "US")
 
     def test_register_login_me_and_logout(self):
         register_response = self.register()
@@ -333,6 +385,64 @@ class BackendApiTests(unittest.TestCase):
         self.assertEqual(empty_feed_response.status_code, 200)
         self.assertEqual(empty_feed_response.get_json()["total"], 0)
 
+        inactive_admin_response = self.client.get(
+            "/admin/trends?is_active=inactive",
+            headers=self.admin_csrf_headers(admin_csrf_token),
+        )
+        self.assertEqual(inactive_admin_response.status_code, 200)
+        self.assertIn(trend["id"], [item["id"] for item in inactive_admin_response.get_json()["items"]])
+
+    def test_gap_opportunities_require_user_and_rank_matching_trends(self):
+        admin_csrf_token = self.admin_login().get_json()["admin"]["csrfToken"]
+        create_qualifying_response = self.client.post(
+            "/admin/trends",
+            headers=self.admin_csrf_headers(admin_csrf_token),
+            json={
+                "title": "Western hook before CIS saturation",
+                "description": "A trend with strong global traction and low CIS saturation.",
+                "platform": "reels",
+                "niche": "marketing",
+                "viral_score": 86,
+                "saturation_sng": 12,
+                "lifecycle_stage": "emerging",
+            },
+        )
+        self.assertEqual(create_qualifying_response.status_code, 201)
+        qualifying_id = create_qualifying_response.get_json()["id"]
+
+        create_saturated_response = self.client.post(
+            "/admin/trends",
+            headers=self.admin_csrf_headers(admin_csrf_token),
+            json={
+                "title": "Already everywhere",
+                "description": "This trend is strong but already saturated in CIS.",
+                "platform": "tiktok",
+                "viral_score": 91,
+                "saturation_sng": 75,
+                "lifecycle_stage": "breakout",
+            },
+        )
+        self.assertEqual(create_saturated_response.status_code, 201)
+        saturated_id = create_saturated_response.get_json()["id"]
+
+        unauthorized_response = self.client.get("/trends/gap-opportunities")
+        self.assertEqual(unauthorized_response.status_code, 401)
+
+        user_token = self.register(email="gap-user@example.com").get_json()["token"]
+        response = self.client.get("/trends/gap-opportunities", headers=self.auth_headers(user_token))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        item_ids = [item["id"] for item in payload["items"]]
+        self.assertIn(qualifying_id, item_ids)
+        self.assertNotIn(saturated_id, item_ids)
+
+        qualifying_item = next(item for item in payload["items"] if item["id"] == qualifying_id)
+        self.assertEqual(qualifying_item["opportunityScore"], 74)
+        self.assertEqual(qualifying_item["opportunity_score"], 74)
+        self.assertEqual(qualifying_item["predictedBreakout"], "2-4 недели")
+        self.assertEqual(qualifying_item["predicted_breakout"], "2-4 недели")
+
     @patch("app.call_gemini_generate")
     def test_trend_remix_generates_and_stores_plan(self, call_gemini_generate_mock):
         admin_csrf_token = self.admin_login().get_json()["admin"]["csrfToken"]
@@ -380,6 +490,12 @@ class BackendApiTests(unittest.TestCase):
         self.assertEqual(payload["format"], "expert_blog")
         self.assertEqual(payload["result"]["hook"], remix_payload["hook"])
         self.assertEqual(payload["analysisModel"], "gemini-test")
+        stats_response = self.client.get("/user/stats", headers=self.auth_headers(user_token))
+        self.assertEqual(stats_response.status_code, 200)
+        stats_payload = stats_response.get_json()
+        self.assertEqual(stats_payload["points"], 30)
+        self.assertEqual(stats_payload["rank"]["label"], "Новичок")
+        self.assertEqual(stats_payload["recentEvents"][0]["eventType"], "REMIX_CREATED")
 
         prompt = json.loads(call_gemini_generate_mock.call_args.args[0])
         self.assertEqual(prompt["task"], "Generate a short-form video content remix plan in Russian")
@@ -500,11 +616,108 @@ class BackendApiTests(unittest.TestCase):
         self.assertEqual(payload["account"]["username"], "examplecreator")
         self.assertEqual(payload["account"]["followersCount"], 4200)
         self.assertEqual(payload["account"]["recentPosts"][0]["videoViewCount"], 3200)
+        stats_response = self.client.get("/user/stats", headers=self.auth_headers(token))
+        self.assertEqual(stats_response.status_code, 200)
+        stats_payload = stats_response.get_json()
+        self.assertEqual(stats_payload["points"], 50)
+        self.assertEqual(stats_payload["recentEvents"][0]["eventType"], "FIRST_ANALYSIS")
+        self.assertEqual(stats_payload["achievements"][0]["key"], "first_blood")
         fetch_apify_items_mock.assert_called_once_with(
             "https://www.tiktok.com/@examplecreator",
             "TikTok",
             "examplecreator",
         )
+
+    def test_user_stats_unlocks_trend_hunter_after_ten_analyses(self):
+        token = self.register(email="hunter@example.com").get_json()["token"]
+        user_id = self.client.get("/auth/me", headers=self.auth_headers(token)).get_json()["user"]["id"]
+        analysis, sources, _model = self.analysis_result()
+        account = {
+            "username": "hunter",
+            "fullName": "Trend Hunter",
+            "biography": "Tests trend discovery",
+            "followersCount": 100,
+            "platform": "Instagram",
+            "profileUrl": "https://www.instagram.com/hunter/",
+            "niche": "Marketing",
+            "recentPosts": [],
+        }
+
+        with self.app.app_context():
+            db = get_database()
+            for index in range(10):
+                save_analysis(
+                    user_id,
+                    f"https://www.instagram.com/hunter{index}/",
+                    "Marketing",
+                    account,
+                    analysis,
+                    sources,
+                )
+                award_points(db, user_id, "FIRST_ANALYSIS" if index == 0 else "ANALYSIS_DONE")
+
+        response = self.client.get("/user/stats", headers=self.auth_headers(token))
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        achievement_keys = {achievement["key"] for achievement in payload["achievements"]}
+        self.assertIn("first_blood", achievement_keys)
+        self.assertIn("trend_hunter", achievement_keys)
+
+    def test_user_stats_unlocks_remix_master_after_five_remixes(self):
+        token = self.register(email="remix-master@example.com").get_json()["token"]
+        user_id = self.client.get("/auth/me", headers=self.auth_headers(token)).get_json()["user"]["id"]
+
+        with self.app.app_context():
+            db = get_database()
+            for index in range(5):
+                db.execute(
+                    """
+                    INSERT INTO remixes (id, user_id, trend_id, format, result_payload, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"remix-{index}",
+                        user_id,
+                        "trend-id",
+                        "expert_blog",
+                        json.dumps({"hook": "Hook"}),
+                        f"2026-05-17T10:0{index}:00+00:00",
+                    ),
+                )
+                award_points(db, user_id, "REMIX_CREATED")
+
+        response = self.client.get("/user/stats", headers=self.auth_headers(token))
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        achievement_keys = {achievement["key"] for achievement in payload["achievements"]}
+        self.assertIn("remix_master", achievement_keys)
+        self.assertEqual(payload["recentEvents"][0]["eventType"], "REMIX_CREATED")
+
+    def test_user_remixes_returns_saved_remix_history(self):
+        token = self.register(email="history@example.com").get_json()["token"]
+        user_id = self.client.get("/auth/me", headers=self.auth_headers(token)).get_json()["user"]["id"]
+
+        with self.app.app_context():
+            get_database().execute(
+                """
+                INSERT INTO remixes (id, user_id, trend_id, format, result_payload, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "history-remix",
+                    user_id,
+                    "missing-trend",
+                    "humor",
+                    json.dumps({"hook": "История сохранена", "hashtags": ["test"]}, ensure_ascii=False),
+                    "2026-05-17T10:00:00+00:00",
+                ),
+            )
+
+        response = self.client.get("/remixes", headers=self.auth_headers(token))
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["items"][0]["id"], "history-remix")
+        self.assertEqual(payload["items"][0]["result"]["hook"], "История сохранена")
 
     def test_tiktok_video_link_is_rejected(self):
         token = self.register().get_json()["token"]
@@ -530,6 +743,24 @@ class BackendApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.get_json()["error"], "AI failed.")
+
+    @patch("app.request.urlopen")
+    def test_apify_not_found_maps_to_bad_gateway(self, urlopen_mock):
+        urlopen_mock.side_effect = error.HTTPError(
+            "https://api.apify.com/v2/acts/missing/run-sync-get-dataset-items",
+            404,
+            "Not found",
+            {},
+            BytesIO(b'{"error":"actor was not found"}'),
+        )
+
+        with self.app.app_context():
+            self.app.config["APIFY_TOKEN"] = "test-token"
+            with self.assertRaises(UpstreamServiceError) as context:
+                fetch_apify_items("https://www.instagram.com/example/")
+
+        self.assertEqual(context.exception.status_code, 502)
+        self.assertIn("Apify", context.exception.message)
 
     def test_ensure_analysis_shape_tolerates_non_numeric_trend_match(self):
         analysis = {

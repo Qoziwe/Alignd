@@ -197,6 +197,7 @@ type TrendFilters = {
   q: string;
   platform: 'all' | TrendPlatform;
   lifecycleStage: 'all' | TrendLifecycleStage;
+  activeState: 'all' | 'active' | 'inactive';
 };
 
 type TrendEditState = {
@@ -236,6 +237,7 @@ const emptyTrendFilters: TrendFilters = {
   q: '',
   platform: 'all',
   lifecycleStage: 'all',
+  activeState: 'active',
 };
 const trendPlatforms: Array<{value: TrendPlatform; label: string}> = [
   {value: 'tiktok', label: 'TikTok'},
@@ -367,6 +369,7 @@ function buildTrendFilterParams(filters: TrendFilters) {
   if (filters.q.trim()) params.set('q', filters.q.trim());
   if (filters.platform !== 'all') params.set('platform', filters.platform);
   if (filters.lifecycleStage !== 'all') params.set('lifecycle_stage', filters.lifecycleStage);
+  if (filters.activeState !== 'all') params.set('is_active', filters.activeState);
   return params;
 }
 
@@ -1071,7 +1074,7 @@ export default function AdminPanel() {
   const handleTrendDeactivate = async (trendId: string) => {
     try {
       await adminFetch<{status: string}>(`/admin/trends/${trendId}`, csrfToken, {method: 'DELETE'});
-      setAdminTrends((items) => items.map((item) => (item.id === trendId ? {...item, isActive: false} : item)));
+      await loadTrends(trendFilters);
       setNotice('Тренд деактивирован.');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Не удалось деактивировать тренд.');
@@ -1568,7 +1571,7 @@ export default function AdminPanel() {
                   {trendsLoading && <div className="text-[12px] text-white/45">Обновляю тренды...</div>}
                 </div>
 
-                <form onSubmit={handleTrendFiltersSubmit} className="mt-4 grid gap-3 lg:grid-cols-[minmax(180px,1fr)_160px_180px_auto]">
+                <form onSubmit={handleTrendFiltersSubmit} className="mt-4 grid gap-3 lg:grid-cols-[minmax(180px,1fr)_160px_180px_150px_auto]">
                   <label className="relative">
                     <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/35" />
                     <input
@@ -1597,6 +1600,15 @@ export default function AdminPanel() {
                     {lifecycleStages.map((stage) => (
                       <option key={stage.value} value={stage.value}>{stage.label}</option>
                     ))}
+                  </select>
+                  <select
+                    value={trendFilters.activeState}
+                    onChange={(event) => setTrendFilters((value) => ({...value, activeState: event.target.value as TrendFilters['activeState']}))}
+                    className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none focus:border-cyan-300/60"
+                  >
+                    <option value="active">Активные</option>
+                    <option value="inactive">Неактивные</option>
+                    <option value="all">Все статусы</option>
                   </select>
                   <button
                     type="submit"
