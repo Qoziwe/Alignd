@@ -147,6 +147,65 @@ type AdminFilters = {
   sort: string;
 };
 
+type AdminTab = 'overview' | 'analyses' | 'trends';
+type TrendPlatform = 'tiktok' | 'instagram' | 'reels' | 'shorts' | 'youtube_shorts';
+type TrendSpeed = 'slow' | 'medium' | 'fast' | 'explosive';
+type TrendLifecycleStage = 'underground' | 'emerging' | 'breakout' | 'saturated' | 'dead';
+
+type AdminTrend = {
+  id: string;
+  title: string;
+  description: string;
+  platform: TrendPlatform;
+  niche: string;
+  countryOrigin: string;
+  sourceUrl: string;
+  videoPreviewUrl: string;
+  scoutComment: string;
+  viralScore: number;
+  trendSpeed: TrendSpeed;
+  saturationSng: number;
+  lifecycleStage: TrendLifecycleStage;
+  createdByAdmin: string;
+  createdAt: string;
+  isActive: boolean;
+};
+
+type AdminTrendsResponse = {
+  items: AdminTrend[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+type TrendFormState = {
+  title: string;
+  description: string;
+  platform: TrendPlatform;
+  niche: string;
+  countryOrigin: string;
+  sourceUrl: string;
+  videoPreviewUrl: string;
+  scoutComment: string;
+  viralScore: number;
+  trendSpeed: TrendSpeed;
+  saturationSng: number;
+  lifecycleStage: TrendLifecycleStage;
+};
+
+type TrendFilters = {
+  q: string;
+  platform: 'all' | TrendPlatform;
+  lifecycleStage: 'all' | TrendLifecycleStage;
+};
+
+type TrendEditState = {
+  lifecycleStage: TrendLifecycleStage;
+  scoutComment: string;
+  viralScore: number;
+  saturationSng: number;
+};
+
 type RealtimeStatus = 'idle' | 'connecting' | 'connected' | 'disabled' | 'closed' | 'error';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000').replace(/\/$/, '');
@@ -159,6 +218,44 @@ const emptyFilters: AdminFilters = {
   scoreMax: '',
   sort: 'newest',
 };
+const emptyTrendForm: TrendFormState = {
+  title: '',
+  description: '',
+  platform: 'tiktok',
+  niche: '',
+  countryOrigin: 'US',
+  sourceUrl: '',
+  videoPreviewUrl: '',
+  scoutComment: '',
+  viralScore: 50,
+  trendSpeed: 'medium',
+  saturationSng: 10,
+  lifecycleStage: 'emerging',
+};
+const emptyTrendFilters: TrendFilters = {
+  q: '',
+  platform: 'all',
+  lifecycleStage: 'all',
+};
+const trendPlatforms: Array<{value: TrendPlatform; label: string}> = [
+  {value: 'tiktok', label: 'TikTok'},
+  {value: 'instagram', label: 'Instagram'},
+  {value: 'reels', label: 'Instagram Reels'},
+  {value: 'youtube_shorts', label: 'YouTube Shorts'},
+];
+const trendSpeeds: Array<{value: TrendSpeed; label: string}> = [
+  {value: 'slow', label: 'Медленный'},
+  {value: 'medium', label: 'Средний'},
+  {value: 'fast', label: 'Быстрый'},
+  {value: 'explosive', label: 'Взрывной'},
+];
+const lifecycleStages: Array<{value: TrendLifecycleStage; label: string; description: string}> = [
+  {value: 'underground', label: 'underground', description: 'Мало кто знает'},
+  {value: 'emerging', label: 'emerging', description: 'Набирает обороты'},
+  {value: 'breakout', label: 'breakout', description: 'Взрывной рост'},
+  {value: 'saturated', label: 'saturated', description: 'Все уже сделали'},
+  {value: 'dead', label: 'dead', description: 'Умер'},
+];
 
 class AdminApiError extends Error {
   status: number;
@@ -263,6 +360,23 @@ function buildFilterParams(filters: AdminFilters) {
   if (filters.scoreMin.trim()) params.set('scoreMin', filters.scoreMin.trim());
   if (filters.scoreMax.trim()) params.set('scoreMax', filters.scoreMax.trim());
   return params;
+}
+
+function buildTrendFilterParams(filters: TrendFilters) {
+  const params = new URLSearchParams({limit: '100'});
+  if (filters.q.trim()) params.set('q', filters.q.trim());
+  if (filters.platform !== 'all') params.set('platform', filters.platform);
+  if (filters.lifecycleStage !== 'all') params.set('lifecycle_stage', filters.lifecycleStage);
+  return params;
+}
+
+function trendPlatformLabel(value: string) {
+  return trendPlatforms.find((platform) => platform.value === value)?.label || value;
+}
+
+function trendLifecycleLabel(value: string) {
+  const stage = lifecycleStages.find((item) => item.value === value);
+  return stage ? `${stage.label} - ${stage.description}` : value;
 }
 
 function socketUrl() {
@@ -637,21 +751,41 @@ export default function AdminPanel() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [trendsLoading, setTrendsLoading] = useState(false);
+  const [trendSubmitting, setTrendSubmitting] = useState(false);
+  const [trendsLoaded, setTrendsLoaded] = useState(false);
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [analyses, setAnalyses] = useState<AdminAnalysisItem[]>([]);
+  const [adminTrends, setAdminTrends] = useState<AdminTrend[]>([]);
+  const [adminTrendsTotal, setAdminTrendsTotal] = useState(0);
   const [selectedDetail, setSelectedDetail] = useState<AdminAnalysisDetail | null>(null);
   const [selectedId, setSelectedId] = useState('');
   const [filters, setFilters] = useState<AdminFilters>(emptyFilters);
+  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+  const [trendForm, setTrendForm] = useState<TrendFormState>(emptyTrendForm);
+  const [trendFilters, setTrendFilters] = useState<TrendFilters>(emptyTrendFilters);
+  const [editingTrendId, setEditingTrendId] = useState('');
+  const [trendEdit, setTrendEdit] = useState<TrendEditState>({
+    lifecycleStage: 'emerging',
+    scoutComment: '',
+    viralScore: 50,
+    saturationSng: 10,
+  });
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('idle');
   const [realtimeNonce, setRealtimeNonce] = useState(0);
   const [notice, setNotice] = useState('');
   const [logMessage, setLogMessage] = useState('');
   const filtersRef = useRef(filters);
+  const trendFiltersRef = useRef(trendFilters);
   const csrfTokenRef = useRef(csrfToken);
 
   useEffect(() => {
     filtersRef.current = filters;
   }, [filters]);
+
+  useEffect(() => {
+    trendFiltersRef.current = trendFilters;
+  }, [trendFilters]);
 
   useEffect(() => {
     csrfTokenRef.current = csrfToken;
@@ -703,6 +837,33 @@ export default function AdminPanel() {
       }
     },
     [],
+  );
+
+  const loadTrends = useCallback(
+    async (nextFilters: TrendFilters = trendFiltersRef.current, csrf: string = csrfTokenRef.current) => {
+      setTrendsLoading(true);
+      try {
+        const params = buildTrendFilterParams(nextFilters);
+        const payload = await adminFetch<AdminTrendsResponse>(`/admin/trends?${params.toString()}`, csrf);
+        setAdminTrends(payload.items);
+        setAdminTrendsTotal(payload.total);
+        setTrendsLoaded(true);
+        setNotice(`Тренды обновлены: ${formatNumber(payload.total)}`);
+        if (editingTrendId && !payload.items.some((item) => item.id === editingTrendId)) {
+          setEditingTrendId('');
+        }
+      } catch (error) {
+        if (error instanceof AdminApiError && error.status === 401) {
+          setCsrfToken('');
+          setSession(null);
+        } else {
+          setNotice(error instanceof Error ? error.message : 'Не удалось загрузить тренды.');
+        }
+      } finally {
+        setTrendsLoading(false);
+      }
+    },
+    [editingTrendId],
   );
 
   useEffect(() => {
@@ -765,6 +926,12 @@ export default function AdminPanel() {
     }
   }, [analyses, openDetail, selectedDetail]);
 
+  useEffect(() => {
+    if (session && activeTab === 'trends' && !trendsLoaded && !trendsLoading) {
+      void loadTrends();
+    }
+  }, [activeTab, loadTrends, session, trendsLoaded, trendsLoading]);
+
   const platforms = useMemo(() => {
     const values = new Set(overview?.charts.platforms.map((item) => item.label).filter(Boolean) || []);
     return ['all', ...Array.from(values)];
@@ -803,7 +970,11 @@ export default function AdminPanel() {
     setSession(null);
     setOverview(null);
     setAnalyses([]);
+    setAdminTrends([]);
+    setAdminTrendsTotal(0);
+    setTrendsLoaded(false);
     setSelectedDetail(null);
+    setEditingTrendId('');
     setRealtimeStatus('idle');
   };
 
@@ -827,6 +998,83 @@ export default function AdminPanel() {
       await loadDashboard(filters);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Не удалось записать лог.');
+    }
+  };
+
+  const handleTrendFiltersSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    setTrendsLoaded(false);
+    void loadTrends(trendFilters);
+  };
+
+  const handleTrendSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setTrendSubmitting(true);
+    try {
+      await adminFetch<AdminTrend>('/admin/trends', csrfToken, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: trendForm.title.trim(),
+          description: trendForm.description.trim(),
+          platform: trendForm.platform,
+          niche: trendForm.niche.trim(),
+          country_origin: trendForm.countryOrigin.trim() || 'US',
+          source_url: trendForm.sourceUrl.trim(),
+          video_preview_url: trendForm.videoPreviewUrl.trim(),
+          scout_comment: trendForm.scoutComment.trim(),
+          viral_score: trendForm.viralScore,
+          trend_speed: trendForm.trendSpeed,
+          saturation_sng: trendForm.saturationSng,
+          lifecycle_stage: trendForm.lifecycleStage,
+        }),
+      });
+      setTrendForm(emptyTrendForm);
+      setTrendsLoaded(false);
+      await loadTrends(trendFilters);
+      setNotice('Тренд добавлен.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось добавить тренд.');
+    } finally {
+      setTrendSubmitting(false);
+    }
+  };
+
+  const openTrendEdit = (trend: AdminTrend) => {
+    setEditingTrendId((currentId) => (currentId === trend.id ? '' : trend.id));
+    setTrendEdit({
+      lifecycleStage: trend.lifecycleStage,
+      scoutComment: trend.scoutComment,
+      viralScore: trend.viralScore,
+      saturationSng: trend.saturationSng,
+    });
+  };
+
+  const handleTrendUpdate = async (trendId: string) => {
+    try {
+      const updatedTrend = await adminFetch<AdminTrend>(`/admin/trends/${trendId}`, csrfToken, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          lifecycle_stage: trendEdit.lifecycleStage,
+          scout_comment: trendEdit.scoutComment,
+          viral_score: trendEdit.viralScore,
+          saturation_sng: trendEdit.saturationSng,
+        }),
+      });
+      setAdminTrends((items) => items.map((item) => (item.id === trendId ? updatedTrend : item)));
+      setEditingTrendId('');
+      setNotice('Тренд обновлен.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось обновить тренд.');
+    }
+  };
+
+  const handleTrendDeactivate = async (trendId: string) => {
+    try {
+      await adminFetch<{status: string}>(`/admin/trends/${trendId}`, csrfToken, {method: 'DELETE'});
+      setAdminTrends((items) => items.map((item) => (item.id === trendId ? {...item, isActive: false} : item)));
+      setNotice('Тренд деактивирован.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось деактивировать тренд.');
     }
   };
 
@@ -916,10 +1164,16 @@ export default function AdminPanel() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => void loadDashboard(filters)}
+              onClick={() => {
+                if (activeTab === 'trends') {
+                  void loadTrends(trendFilters);
+                  return;
+                }
+                void loadDashboard(filters);
+              }}
               className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-white/12 px-3 text-[13px] font-bold text-white/75 transition-colors hover:bg-white/8"
             >
-              <RefreshCcw size={16} className={dashboardLoading ? 'animate-spin' : ''} />
+              <RefreshCcw size={16} className={(activeTab === 'trends' ? trendsLoading : dashboardLoading) ? 'animate-spin' : ''} />
               Обновить
             </button>
             <button
@@ -935,183 +1189,570 @@ export default function AdminPanel() {
       </header>
 
       <main className="mx-auto w-full max-w-[1480px] px-4 py-5 lg:px-6">
-        <form onSubmit={handleFiltersSubmit} className="mb-5 rounded-lg border border-white/10 bg-[#10151B] p-4">
-          <div className="grid gap-3 lg:grid-cols-[minmax(220px,1.4fr)_160px_minmax(140px,0.8fr)_minmax(140px,0.8fr)_110px_110px_160px_auto]">
-            <label className="relative">
-              <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/35" />
-              <input
-                value={filters.q}
-                onChange={(event) => setFilters((value) => ({...value, q: event.target.value}))}
-                placeholder="Поиск: профиль, пользователь, ниша, текст анализа"
-                className="h-10 w-full rounded-md border border-white/10 bg-black/24 pl-9 pr-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
-              />
-            </label>
-            <select
-              value={filters.platform}
-              onChange={(event) => setFilters((value) => ({...value, platform: event.target.value}))}
-              className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none focus:border-cyan-300/60"
-            >
-              {platforms.map((platform) => (
-                <option key={platform} value={platform}>
-                  {platform === 'all' ? 'Все платформы' : platform}
-                </option>
-              ))}
-            </select>
-            <input
-              value={filters.niche}
-              onChange={(event) => setFilters((value) => ({...value, niche: event.target.value}))}
-              placeholder="Ниша"
-              className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
-            />
-            <input
-              value={filters.user}
-              onChange={(event) => setFilters((value) => ({...value, user: event.target.value}))}
-              placeholder="Пользователь"
-              className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
-            />
-            <input
-              value={filters.scoreMin}
-              onChange={(event) => setFilters((value) => ({...value, scoreMin: event.target.value}))}
-              placeholder="Score от"
-              className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
-            />
-            <input
-              value={filters.scoreMax}
-              onChange={(event) => setFilters((value) => ({...value, scoreMax: event.target.value}))}
-              placeholder="Score до"
-              className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
-            />
-            <select
-              value={filters.sort}
-              onChange={(event) => setFilters((value) => ({...value, sort: event.target.value}))}
-              className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none focus:border-cyan-300/60"
-            >
-              <option value="newest">Новые</option>
-              <option value="score-high">Score выше</option>
-              <option value="score-low">Score ниже</option>
-              <option value="followers-high">Подписчики</option>
-              <option value="username">Username</option>
-            </select>
+        <nav className="mb-5 flex flex-wrap gap-2 rounded-lg border border-white/10 bg-[#10151B] p-2">
+          {[
+            {id: 'overview' as AdminTab, label: 'Обзор', icon: BarChart3},
+            {id: 'analyses' as AdminTab, label: 'Анализы', icon: Database},
+            {id: 'trends' as AdminTab, label: 'Тренды', icon: TrendingUp},
+          ].map(({id, label, icon: Icon}) => (
             <button
-              type="submit"
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-white px-4 text-[13px] font-black text-black transition-colors hover:bg-cyan-100"
+              key={id}
+              type="button"
+              onClick={() => setActiveTab(id)}
+              className={`inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-[13px] font-black transition-colors ${
+                activeTab === id ? 'brand-gradient-bg' : 'border border-white/10 text-white/62 hover:bg-white/8 hover:text-white'
+              }`}
             >
-              <Filter size={16} />
-              Фильтр
+              <Icon size={16} />
+              {label}
             </button>
-          </div>
-        </form>
+          ))}
+        </nav>
 
         {notice && <div className="mb-5 rounded-md border border-white/10 bg-white/[0.04] px-4 py-2 text-[13px] text-white/62">{notice}</div>}
 
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-          <MetricCard icon={Database} label="Анализы" value={formatNumber(summary?.totalAnalyses)} hint="Все сохраненные разборы" tone="blue" />
-          <MetricCard icon={UsersRound} label="Пользователи" value={formatNumber(summary?.totalUsers)} hint="Зарегистрированные аккаунты" />
-          <MetricCard icon={Eye} label="Профили" value={formatNumber(summary?.uniqueProfiles)} hint="Уникальные ссылки" />
-          <MetricCard icon={Clock3} label="24 часа" value={formatNumber(summary?.analysesLast24h)} hint="Новые анализы" tone="green" />
-          <MetricCard icon={Sparkles} label="Avg score" value={`${formatNumber(summary?.averageCompatibility)}%`} hint="Средняя совместимость" />
-          <MetricCard icon={MessageSquareText} label="Логи" value={formatNumber(summary?.totalLogs)} hint="Админские заметки" tone="red" />
-        </section>
+        {activeTab === 'overview' && (
+          <>
+            <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+              <MetricCard icon={Database} label="Анализы" value={formatNumber(summary?.totalAnalyses)} hint="Все сохраненные разборы" tone="blue" />
+              <MetricCard icon={UsersRound} label="Пользователи" value={formatNumber(summary?.totalUsers)} hint="Зарегистрированные аккаунты" />
+              <MetricCard icon={Eye} label="Профили" value={formatNumber(summary?.uniqueProfiles)} hint="Уникальные ссылки" />
+              <MetricCard icon={Clock3} label="24 часа" value={formatNumber(summary?.analysesLast24h)} hint="Новые анализы" tone="green" />
+              <MetricCard icon={Sparkles} label="Avg score" value={`${formatNumber(summary?.averageCompatibility)}%`} hint="Средняя совместимость" />
+              <MetricCard icon={MessageSquareText} label="Логи" value={formatNumber(summary?.totalLogs)} hint="Админские заметки" tone="red" />
+            </section>
 
-        <section className="mt-5 grid gap-4 xl:grid-cols-4">
-          <TimelineBars title="Динамика за 14 дней" items={overview?.charts.dailyAnalyses || []} />
-          <TimelineBars title="Активность за 24 часа" items={overview?.charts.hourlyAnalyses || []} hourly />
-          <BarList title="Платформы" icon={BarChart3} items={overview?.charts.platforms || []} />
-          <BarList title="Score buckets" icon={ArrowUpDown} items={overview?.charts.scoreBuckets || []} />
-        </section>
+            <section className="mt-5 grid gap-4 xl:grid-cols-4">
+              <TimelineBars title="Динамика за 14 дней" items={overview?.charts.dailyAnalyses || []} />
+              <TimelineBars title="Активность за 24 часа" items={overview?.charts.hourlyAnalyses || []} hourly />
+              <BarList title="Платформы" icon={BarChart3} items={overview?.charts.platforms || []} />
+              <BarList title="Score buckets" icon={ArrowUpDown} items={overview?.charts.scoreBuckets || []} />
+            </section>
 
-        <section className="mt-5 grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
-          <BarList title="Частые ниши" icon={TrendingUp} items={overview?.rankings.topNiches || []} />
-          <BarList title="Редкие ниши" icon={TrendingDown} items={overview?.rankings.rareNiches || []} />
-          <BarList title="Частые профили" icon={UserRound} items={overview?.rankings.topProfiles || []} />
-          <BarList title="Редкие профили" icon={UserRound} items={overview?.rankings.rareProfiles || []} />
-          <BarList title="Пользователи по анализам" icon={UsersRound} items={overview?.rankings.topUsers || []} />
-          <BarList title="Источники" icon={LinkIcon} items={overview?.rankings.topSources || []} />
-          <BarList title="Редкие источники" icon={LinkIcon} items={overview?.rankings.rareSources || []} />
-          <BarList
-            title="Контент-суммы"
-            icon={FileText}
-            items={[
-              {label: 'Тренды', value: summary?.totalTrends || 0},
-              {label: 'Идеи', value: summary?.totalIdeas || 0},
-              {label: 'Хуки', value: summary?.totalHooks || 0},
-              {label: 'Источники', value: summary?.totalSources || 0},
-              {label: '7 дней', value: summary?.analysesLast7d || 0},
-            ]}
-          />
-        </section>
+            <section className="mt-5 grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+              <BarList title="Частые ниши" icon={TrendingUp} items={overview?.rankings.topNiches || []} />
+              <BarList title="Редкие ниши" icon={TrendingDown} items={overview?.rankings.rareNiches || []} />
+              <BarList title="Частые профили" icon={UserRound} items={overview?.rankings.topProfiles || []} />
+              <BarList title="Редкие профили" icon={UserRound} items={overview?.rankings.rareProfiles || []} />
+              <BarList title="Пользователи по анализам" icon={UsersRound} items={overview?.rankings.topUsers || []} />
+              <BarList title="Источники" icon={LinkIcon} items={overview?.rankings.topSources || []} />
+              <BarList title="Редкие источники" icon={LinkIcon} items={overview?.rankings.rareSources || []} />
+              <BarList
+                title="Контент-суммы"
+                icon={FileText}
+                items={[
+                  {label: 'Тренды', value: summary?.totalTrends || 0},
+                  {label: 'Идеи', value: summary?.totalIdeas || 0},
+                  {label: 'Хуки', value: summary?.totalHooks || 0},
+                  {label: 'Источники', value: summary?.totalSources || 0},
+                  {label: '7 дней', value: summary?.analysesLast7d || 0},
+                ]}
+              />
+            </section>
+          </>
+        )}
 
-        <section className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(420px,0.9fr)]">
-          <div className="rounded-lg border border-white/10 bg-[#10151B]">
-            <div className="flex flex-col gap-2 border-b border-white/10 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-[17px] font-black text-white">Все анализы</h2>
-                <div className="mt-1 text-[12px] text-white/45">
-                  Показано {formatNumber(analyses.length)} из {formatNumber(overview?.analyses.total || 0)}
+        {activeTab === 'analyses' && (
+          <>
+            <form onSubmit={handleFiltersSubmit} className="mb-5 rounded-lg border border-white/10 bg-[#10151B] p-4">
+              <div className="grid gap-3 lg:grid-cols-[minmax(220px,1.4fr)_160px_minmax(140px,0.8fr)_minmax(140px,0.8fr)_110px_110px_160px_auto]">
+                <label className="relative">
+                  <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/35" />
+                  <input
+                    value={filters.q}
+                    onChange={(event) => setFilters((value) => ({...value, q: event.target.value}))}
+                    placeholder="Поиск: профиль, пользователь, ниша, текст анализа"
+                    className="h-10 w-full rounded-md border border-white/10 bg-black/24 pl-9 pr-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
+                  />
+                </label>
+                <select
+                  value={filters.platform}
+                  onChange={(event) => setFilters((value) => ({...value, platform: event.target.value}))}
+                  className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none focus:border-cyan-300/60"
+                >
+                  {platforms.map((platform) => (
+                    <option key={platform} value={platform}>
+                      {platform === 'all' ? 'Все платформы' : platform}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  value={filters.niche}
+                  onChange={(event) => setFilters((value) => ({...value, niche: event.target.value}))}
+                  placeholder="Ниша"
+                  className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
+                />
+                <input
+                  value={filters.user}
+                  onChange={(event) => setFilters((value) => ({...value, user: event.target.value}))}
+                  placeholder="Пользователь"
+                  className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
+                />
+                <input
+                  value={filters.scoreMin}
+                  onChange={(event) => setFilters((value) => ({...value, scoreMin: event.target.value}))}
+                  placeholder="Score от"
+                  className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
+                />
+                <input
+                  value={filters.scoreMax}
+                  onChange={(event) => setFilters((value) => ({...value, scoreMax: event.target.value}))}
+                  placeholder="Score до"
+                  className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
+                />
+                <select
+                  value={filters.sort}
+                  onChange={(event) => setFilters((value) => ({...value, sort: event.target.value}))}
+                  className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none focus:border-cyan-300/60"
+                >
+                  <option value="newest">Новые</option>
+                  <option value="score-high">Score выше</option>
+                  <option value="score-low">Score ниже</option>
+                  <option value="followers-high">Подписчики</option>
+                  <option value="username">Username</option>
+                </select>
+                <button
+                  type="submit"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-white px-4 text-[13px] font-black text-black transition-colors hover:bg-cyan-100"
+                >
+                  <Filter size={16} />
+                  Фильтр
+                </button>
+              </div>
+            </form>
+
+            <section className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(420px,0.9fr)]">
+              <div className="rounded-lg border border-white/10 bg-[#10151B]">
+                <div className="flex flex-col gap-2 border-b border-white/10 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-[17px] font-black text-white">Все анализы</h2>
+                    <div className="mt-1 text-[12px] text-white/45">
+                      Показано {formatNumber(analyses.length)} из {formatNumber(overview?.analyses.total || 0)}
+                    </div>
+                  </div>
+                  {dashboardLoading && <div className="text-[12px] text-white/45">Обновляю данные...</div>}
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[920px] border-collapse text-left text-[13px]">
+                    <thead className="text-[11px] uppercase text-white/42">
+                      <tr className="border-b border-white/10">
+                        <th className="px-4 py-3 font-bold">Профиль</th>
+                        <th className="px-4 py-3 font-bold">Пользователь</th>
+                        <th className="px-4 py-3 font-bold">Ниша</th>
+                        <th className="px-4 py-3 font-bold">Score</th>
+                        <th className="px-4 py-3 font-bold">Инфо</th>
+                        <th className="px-4 py-3 font-bold">Дата</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analyses.map((item) => (
+                        <tr
+                          key={item.id}
+                          onClick={() => void openDetail(item.id)}
+                          className={`cursor-pointer border-b border-white/6 transition-colors hover:bg-white/[0.04] ${
+                            selectedId === item.id ? 'bg-cyan-300/8' : ''
+                          }`}
+                        >
+                          <td className="px-4 py-3">
+                            <div className="font-bold text-white">@{item.username || 'unknown'}</div>
+                            <div className="mt-1 text-[12px] text-white/42">{item.platform}</div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="text-white/72">{item.user.displayName}</div>
+                            <div className="mt-1 text-[12px] text-white/38">{item.user.email}</div>
+                          </td>
+                          <td className="max-w-[260px] px-4 py-3">
+                            <div className="truncate text-white/72" title={item.niche}>{item.niche || 'Без ниши'}</div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="font-black text-white">{item.compatibilityScore === null ? '-' : `${item.compatibilityScore}%`}</div>
+                            <div className="mt-1 text-[12px] text-white/42">{item.compatibilityLabel}</div>
+                          </td>
+                          <td className="px-4 py-3 text-white/62">
+                            <div>{item.trendsCount} тренда · {item.ideasCount} идеи · {item.hooksCount} хуков</div>
+                            <div className="mt-1 text-[12px] text-white/38">{item.sourcesCount} источн. · {item.logsCount} логов</div>
+                          </td>
+                          <td className="px-4 py-3 text-white/55">{formatDateTime(item.createdAt)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {analyses.length === 0 && (
+                    <div className="px-4 py-10 text-center text-[14px] text-white/45">По этим фильтрам анализов нет.</div>
+                  )}
                 </div>
               </div>
-              {dashboardLoading && <div className="text-[12px] text-white/45">Обновляю данные...</div>}
-            </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[920px] border-collapse text-left text-[13px]">
-                <thead className="text-[11px] uppercase text-white/42">
-                  <tr className="border-b border-white/10">
-                    <th className="px-4 py-3 font-bold">Профиль</th>
-                    <th className="px-4 py-3 font-bold">Пользователь</th>
-                    <th className="px-4 py-3 font-bold">Ниша</th>
-                    <th className="px-4 py-3 font-bold">Score</th>
-                    <th className="px-4 py-3 font-bold">Инфо</th>
-                    <th className="px-4 py-3 font-bold">Дата</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {analyses.map((item) => (
-                    <tr
-                      key={item.id}
-                      onClick={() => void openDetail(item.id)}
-                      className={`cursor-pointer border-b border-white/6 transition-colors hover:bg-white/[0.04] ${
-                        selectedId === item.id ? 'bg-cyan-300/8' : ''
-                      }`}
-                    >
-                      <td className="px-4 py-3">
-                        <div className="font-bold text-white">@{item.username || 'unknown'}</div>
-                        <div className="mt-1 text-[12px] text-white/42">{item.platform}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="text-white/72">{item.user.displayName}</div>
-                        <div className="mt-1 text-[12px] text-white/38">{item.user.email}</div>
-                      </td>
-                      <td className="max-w-[260px] px-4 py-3">
-                        <div className="truncate text-white/72" title={item.niche}>{item.niche || 'Без ниши'}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="font-black text-white">{item.compatibilityScore === null ? '-' : `${item.compatibilityScore}%`}</div>
-                        <div className="mt-1 text-[12px] text-white/42">{item.compatibilityLabel}</div>
-                      </td>
-                      <td className="px-4 py-3 text-white/62">
-                        <div>{item.trendsCount} тренда · {item.ideasCount} идеи · {item.hooksCount} хуков</div>
-                        <div className="mt-1 text-[12px] text-white/38">{item.sourcesCount} источн. · {item.logsCount} логов</div>
-                      </td>
-                      <td className="px-4 py-3 text-white/55">{formatDateTime(item.createdAt)}</td>
+              <DetailPanel
+                detail={selectedDetail}
+                loading={detailLoading}
+                logMessage={logMessage}
+                onLogMessageChange={setLogMessage}
+                onAddLog={() => void handleAddLog()}
+              />
+            </section>
+          </>
+        )}
+
+        {activeTab === 'trends' && (
+          <section className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)] xl:items-start">
+            <form onSubmit={handleTrendSubmit} className="rounded-lg border border-[var(--color-border-default)] bg-[#10151B] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.24)]">
+              <div className="mb-4">
+                <h2 className="text-[17px] font-black text-white">Добавить тренд</h2>
+                <p className="mt-1 text-[12px] text-white/45">Ручной ввод для human trend scouts.</p>
+              </div>
+
+              <div className="space-y-4">
+                <label className="block">
+                  <span className="text-[12px] font-bold uppercase text-white/45">Title</span>
+                  <input
+                    value={trendForm.title}
+                    onChange={(event) => setTrendForm((value) => ({...value, title: event.target.value}))}
+                    className="mt-2 h-10 w-full rounded-md border border-white/10 bg-black/28 px-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
+                    required
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-[12px] font-bold uppercase text-white/45">Description</span>
+                  <textarea
+                    value={trendForm.description}
+                    onChange={(event) => setTrendForm((value) => ({...value, description: event.target.value}))}
+                    placeholder="Что за тренд и как он выглядит в роликах?"
+                    rows={3}
+                    className="mt-2 w-full resize-y rounded-md border border-white/10 bg-black/28 px-3 py-2 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
+                    required
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-[12px] font-bold uppercase text-white/45">Platform</span>
+                  <select
+                    value={trendForm.platform}
+                    onChange={(event) => setTrendForm((value) => ({...value, platform: event.target.value as TrendPlatform}))}
+                    className="mt-2 h-10 w-full rounded-md border border-white/10 bg-black/28 px-3 text-[13px] text-white outline-none focus:border-cyan-300/60"
+                  >
+                    {trendPlatforms.map((platform) => (
+                      <option key={platform.value} value={platform.value}>{platform.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="text-[12px] font-bold uppercase text-white/45">Niche</span>
+                  <input
+                    value={trendForm.niche}
+                    onChange={(event) => setTrendForm((value) => ({...value, niche: event.target.value}))}
+                    placeholder="маркетинг, финансы, lifestyle..."
+                    className="mt-2 h-10 w-full rounded-md border border-white/10 bg-black/28 px-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-[12px] font-bold uppercase text-white/45">Country Origin</span>
+                  <input
+                    value={trendForm.countryOrigin}
+                    onChange={(event) => setTrendForm((value) => ({...value, countryOrigin: event.target.value}))}
+                    className="mt-2 h-10 w-full rounded-md border border-white/10 bg-black/28 px-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-[12px] font-bold uppercase text-white/45">Source URL</span>
+                  <input
+                    value={trendForm.sourceUrl}
+                    onChange={(event) => setTrendForm((value) => ({...value, sourceUrl: event.target.value}))}
+                    placeholder="https://..."
+                    className="mt-2 h-10 w-full rounded-md border border-white/10 bg-black/28 px-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-[12px] font-bold uppercase text-white/45">Video Preview URL</span>
+                  <input
+                    value={trendForm.videoPreviewUrl}
+                    onChange={(event) => setTrendForm((value) => ({...value, videoPreviewUrl: event.target.value}))}
+                    placeholder="https://... (необязательно)"
+                    className="mt-2 h-10 w-full rounded-md border border-white/10 bg-black/28 px-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-[12px] font-bold uppercase text-white/45">Scout Comment</span>
+                  <textarea
+                    value={trendForm.scoutComment}
+                    onChange={(event) => setTrendForm((value) => ({...value, scoutComment: event.target.value}))}
+                    placeholder="Почему ролик цепляет? Что в нем работает?"
+                    rows={3}
+                    className="mt-2 w-full resize-y rounded-md border border-white/10 bg-black/28 px-3 py-2 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="flex items-center justify-between text-[12px] font-bold uppercase text-white/45">
+                    Viral Score
+                    <span className="text-white">{trendForm.viralScore}</span>
+                  </span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={trendForm.viralScore}
+                    onChange={(event) => setTrendForm((value) => ({...value, viralScore: Number(event.target.value)}))}
+                    className="mt-2 w-full accent-[#e840a8]"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-[12px] font-bold uppercase text-white/45">Trend Speed</span>
+                  <select
+                    value={trendForm.trendSpeed}
+                    onChange={(event) => setTrendForm((value) => ({...value, trendSpeed: event.target.value as TrendSpeed}))}
+                    className="mt-2 h-10 w-full rounded-md border border-white/10 bg-black/28 px-3 text-[13px] text-white outline-none focus:border-cyan-300/60"
+                  >
+                    {trendSpeeds.map((speed) => (
+                      <option key={speed.value} value={speed.value}>{speed.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="flex items-center justify-between text-[12px] font-bold uppercase text-white/45">
+                    Насыщенность в СНГ
+                    <span className="text-white">{trendForm.saturationSng}</span>
+                  </span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={trendForm.saturationSng}
+                    onChange={(event) => setTrendForm((value) => ({...value, saturationSng: Number(event.target.value)}))}
+                    className="mt-2 w-full accent-[#a855f7]"
+                  />
+                  <span className="mt-1 block text-[12px] text-white/40">0 = тренд еще не добрался, 100 = везде</span>
+                </label>
+
+                <label className="block">
+                  <span className="text-[12px] font-bold uppercase text-white/45">Lifecycle Stage</span>
+                  <select
+                    value={trendForm.lifecycleStage}
+                    onChange={(event) => setTrendForm((value) => ({...value, lifecycleStage: event.target.value as TrendLifecycleStage}))}
+                    className="mt-2 h-10 w-full rounded-md border border-white/10 bg-black/28 px-3 text-[13px] text-white outline-none focus:border-cyan-300/60"
+                  >
+                    {lifecycleStages.map((stage) => (
+                      <option key={stage.value} value={stage.value}>{stage.label} - {stage.description}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <button
+                  type="submit"
+                  disabled={trendSubmitting}
+                  className="brand-gradient-bg inline-flex h-11 w-full items-center justify-center rounded-md px-4 text-[14px] font-black disabled:cursor-not-allowed disabled:opacity-55"
+                >
+                  {trendSubmitting ? 'Добавляю...' : 'Добавить тренд'}
+                </button>
+              </div>
+            </form>
+
+            <div className="rounded-lg border border-[var(--color-border-default)] bg-[#10151B]">
+              <div className="border-b border-white/10 px-4 py-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-[17px] font-black text-white">Тренды</h2>
+                    <div className="mt-1 text-[12px] text-white/45">
+                      Показано {formatNumber(adminTrends.length)} из {formatNumber(adminTrendsTotal)}
+                    </div>
+                  </div>
+                  {trendsLoading && <div className="text-[12px] text-white/45">Обновляю тренды...</div>}
+                </div>
+
+                <form onSubmit={handleTrendFiltersSubmit} className="mt-4 grid gap-3 lg:grid-cols-[minmax(180px,1fr)_160px_180px_auto]">
+                  <label className="relative">
+                    <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/35" />
+                    <input
+                      value={trendFilters.q}
+                      onChange={(event) => setTrendFilters((value) => ({...value, q: event.target.value}))}
+                      placeholder="Поиск по title, niche, description"
+                      className="h-10 w-full rounded-md border border-white/10 bg-black/24 pl-9 pr-3 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
+                    />
+                  </label>
+                  <select
+                    value={trendFilters.platform}
+                    onChange={(event) => setTrendFilters((value) => ({...value, platform: event.target.value as TrendFilters['platform']}))}
+                    className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none focus:border-cyan-300/60"
+                  >
+                    <option value="all">Все платформы</option>
+                    {trendPlatforms.map((platform) => (
+                      <option key={platform.value} value={platform.value}>{platform.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={trendFilters.lifecycleStage}
+                    onChange={(event) => setTrendFilters((value) => ({...value, lifecycleStage: event.target.value as TrendFilters['lifecycleStage']}))}
+                    className="h-10 rounded-md border border-white/10 bg-black/24 px-3 text-[13px] text-white outline-none focus:border-cyan-300/60"
+                  >
+                    <option value="all">Все стадии</option>
+                    {lifecycleStages.map((stage) => (
+                      <option key={stage.value} value={stage.value}>{stage.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="submit"
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-white px-4 text-[13px] font-black text-black transition-colors hover:bg-cyan-100"
+                  >
+                    <Filter size={16} />
+                    Фильтр
+                  </button>
+                </form>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[940px] border-collapse text-left text-[13px]">
+                  <thead className="text-[11px] uppercase text-white/42">
+                    <tr className="border-b border-white/10">
+                      <th className="px-4 py-3 font-bold">Title</th>
+                      <th className="px-4 py-3 font-bold">Platform</th>
+                      <th className="px-4 py-3 font-bold">Viral Score</th>
+                      <th className="px-4 py-3 font-bold">СНГ %</th>
+                      <th className="px-4 py-3 font-bold">Stage</th>
+                      <th className="px-4 py-3 font-bold">Дата</th>
+                      <th className="px-4 py-3 font-bold">Действия</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              {analyses.length === 0 && (
-                <div className="px-4 py-10 text-center text-[14px] text-white/45">По этим фильтрам анализов нет.</div>
-              )}
-            </div>
-          </div>
+                  </thead>
+                  <tbody>
+                    {adminTrends.map((trend) => (
+                      <React.Fragment key={trend.id}>
+                        <tr
+                          onClick={() => openTrendEdit(trend)}
+                          className={`cursor-pointer border-b border-white/6 transition-colors hover:bg-white/[0.04] ${
+                            editingTrendId === trend.id ? 'bg-cyan-300/8' : ''
+                          } ${trend.isActive ? '' : 'opacity-50'}`}
+                        >
+                          <td className="max-w-[320px] px-4 py-3">
+                            <div className="truncate font-bold text-white" title={trend.title}>{trend.title}</div>
+                            <div className="mt-1 truncate text-[12px] text-white/42" title={trend.niche}>{trend.niche || 'Без ниши'}</div>
+                          </td>
+                          <td className="px-4 py-3 text-white/72">{trendPlatformLabel(trend.platform)}</td>
+                          <td className="px-4 py-3 font-black text-white">{trend.viralScore}</td>
+                          <td className="px-4 py-3 text-white/72">{trend.saturationSng}%</td>
+                          <td className="px-4 py-3">
+                            <span className="rounded-full border border-white/10 bg-black/24 px-3 py-1 text-[12px] text-white/72">
+                              {trend.lifecycleStage}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-white/55">{formatDateTime(trend.createdAt)}</td>
+                          <td className="px-4 py-3">
+                            <button
+                              type="button"
+                              disabled={!trend.isActive}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void handleTrendDeactivate(trend.id);
+                              }}
+                              className="rounded-md border border-rose-400/30 px-3 py-1.5 text-[12px] font-bold text-rose-100 transition-colors hover:bg-rose-400/10 disabled:cursor-not-allowed disabled:opacity-45"
+                            >
+                              Деактивировать
+                            </button>
+                          </td>
+                        </tr>
+                        {editingTrendId === trend.id && (
+                          <tr className="border-b border-white/10 bg-black/18">
+                            <td colSpan={7} className="px-4 py-4">
+                              <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)_180px_180px_auto] lg:items-end">
+                                <label className="block">
+                                  <span className="text-[12px] font-bold uppercase text-white/45">Lifecycle Stage</span>
+                                  <select
+                                    value={trendEdit.lifecycleStage}
+                                    onChange={(event) => setTrendEdit((value) => ({...value, lifecycleStage: event.target.value as TrendLifecycleStage}))}
+                                    className="mt-2 h-10 w-full rounded-md border border-white/10 bg-black/28 px-3 text-[13px] text-white outline-none focus:border-cyan-300/60"
+                                  >
+                                    {lifecycleStages.map((stage) => (
+                                      <option key={stage.value} value={stage.value}>{stage.label} - {stage.description}</option>
+                                    ))}
+                                  </select>
+                                </label>
 
-          <DetailPanel
-            detail={selectedDetail}
-            loading={detailLoading}
-            logMessage={logMessage}
-            onLogMessageChange={setLogMessage}
-            onAddLog={() => void handleAddLog()}
-          />
-        </section>
+                                <label className="block">
+                                  <span className="text-[12px] font-bold uppercase text-white/45">Scout Comment</span>
+                                  <textarea
+                                    value={trendEdit.scoutComment}
+                                    onChange={(event) => setTrendEdit((value) => ({...value, scoutComment: event.target.value}))}
+                                    rows={2}
+                                    className="mt-2 w-full resize-y rounded-md border border-white/10 bg-black/28 px-3 py-2 text-[13px] text-white outline-none placeholder:text-white/35 focus:border-cyan-300/60"
+                                  />
+                                </label>
+
+                                <label className="block">
+                                  <span className="flex justify-between text-[12px] font-bold uppercase text-white/45">
+                                    Viral
+                                    <span className="text-white">{trendEdit.viralScore}</span>
+                                  </span>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max="100"
+                                    value={trendEdit.viralScore}
+                                    onChange={(event) => setTrendEdit((value) => ({...value, viralScore: Number(event.target.value)}))}
+                                    className="mt-2 w-full accent-[#e840a8]"
+                                  />
+                                </label>
+
+                                <label className="block">
+                                  <span className="flex justify-between text-[12px] font-bold uppercase text-white/45">
+                                    СНГ
+                                    <span className="text-white">{trendEdit.saturationSng}</span>
+                                  </span>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max="100"
+                                    value={trendEdit.saturationSng}
+                                    onChange={(event) => setTrendEdit((value) => ({...value, saturationSng: Number(event.target.value)}))}
+                                    className="mt-2 w-full accent-[#a855f7]"
+                                  />
+                                </label>
+
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleTrendUpdate(trend.id)}
+                                    className="brand-gradient-bg inline-flex h-10 items-center justify-center rounded-md px-4 text-[13px] font-black"
+                                  >
+                                    Сохранить
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingTrendId('')}
+                                    className="inline-flex h-10 items-center justify-center rounded-md border border-white/12 px-4 text-[13px] font-bold text-white/72 transition-colors hover:bg-white/8"
+                                  >
+                                    Отмена
+                                  </button>
+                                </div>
+                              </div>
+                              {trend.scoutComment && (
+                                <div className="mt-3 rounded-md border border-white/10 bg-black/24 p-3 text-[12px] leading-[1.45] text-white/50">
+                                  {trend.scoutComment}
+                                </div>
+                              )}
+                              <div className="mt-3 text-[12px] text-white/35">
+                                {trendLifecycleLabel(trend.lifecycleStage)}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+                {adminTrends.length === 0 && (
+                  <div className="px-4 py-10 text-center text-[14px] text-white/45">Трендов по этим фильтрам нет.</div>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
       </main>
     </div>
   );

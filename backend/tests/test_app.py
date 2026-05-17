@@ -257,6 +257,81 @@ class BackendApiTests(unittest.TestCase):
         )
         self.assertEqual(logout_response.status_code, 200)
 
+    def test_admin_trends_crud_and_user_feed(self):
+        admin_response = self.admin_login()
+        self.assertEqual(admin_response.status_code, 200)
+        admin_csrf_token = admin_response.get_json()["admin"]["csrfToken"]
+
+        create_response = self.client.post(
+            "/admin/trends",
+            headers=self.admin_csrf_headers(admin_csrf_token),
+            json={
+                "title": "Founder tab confession",
+                "description": "Creators show open browser tabs to explain what they are building.",
+                "platform": "reels",
+                "niche": "startups",
+                "country_origin": "US",
+                "source_url": "https://example.com/reel",
+                "scout_comment": "Works because it feels specific and vulnerable.",
+                "viral_score": 82,
+                "trend_speed": "fast",
+                "saturation_sng": 18,
+                "lifecycle_stage": "emerging",
+            },
+        )
+        self.assertEqual(create_response.status_code, 201)
+        trend = create_response.get_json()
+        self.assertEqual(trend["title"], "Founder tab confession")
+        self.assertEqual(trend["platform"], "reels")
+        self.assertTrue(trend["isActive"])
+
+        list_response = self.client.get("/admin/trends?q=founder&platform=reels")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.get_json()["total"], 1)
+
+        patch_without_csrf = self.client.patch(
+            f"/admin/trends/{trend['id']}",
+            json={"lifecycle_stage": "breakout"},
+        )
+        self.assertEqual(patch_without_csrf.status_code, 403)
+
+        patch_response = self.client.patch(
+            f"/admin/trends/{trend['id']}",
+            headers=self.admin_csrf_headers(admin_csrf_token),
+            json={
+                "lifecycle_stage": "breakout",
+                "scout_comment": "Growth is accelerating.",
+                "viral_score": 91,
+                "saturation_sng": 29,
+            },
+        )
+        self.assertEqual(patch_response.status_code, 200)
+        updated_trend = patch_response.get_json()
+        self.assertEqual(updated_trend["lifecycleStage"], "breakout")
+        self.assertEqual(updated_trend["viralScore"], 91)
+
+        feed_without_user = self.client.get("/trends/feed")
+        self.assertEqual(feed_without_user.status_code, 401)
+
+        user_token = self.register(email="trend-user@example.com").get_json()["token"]
+        feed_response = self.client.get("/trends/feed?platform=reels", headers=self.auth_headers(user_token))
+        self.assertEqual(feed_response.status_code, 200)
+        feed_payload = feed_response.get_json()
+        self.assertEqual(feed_payload["total"], 1)
+        self.assertEqual(feed_payload["items"][0]["id"], trend["id"])
+        self.assertFalse(feed_payload["hasMore"])
+
+        delete_response = self.client.delete(
+            f"/admin/trends/{trend['id']}",
+            headers=self.admin_csrf_headers(admin_csrf_token),
+        )
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertEqual(delete_response.get_json()["status"], "deactivated")
+
+        empty_feed_response = self.client.get("/trends/feed?platform=reels", headers=self.auth_headers(user_token))
+        self.assertEqual(empty_feed_response.status_code, 200)
+        self.assertEqual(empty_feed_response.get_json()["total"], 0)
+
     @patch("app.generate_analysis")
     @patch("app.fetch_apify_items")
     def test_analyze_tiktok_profile(self, fetch_apify_items_mock, generate_analysis_mock):

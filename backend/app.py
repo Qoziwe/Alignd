@@ -106,6 +106,9 @@ STOPWORDS = {
     "are",
     "for",
 }
+TREND_PLATFORMS = {"tiktok", "instagram", "reels", "shorts", "youtube_shorts"}
+TREND_SPEEDS = {"slow", "medium", "fast", "explosive"}
+TREND_LIFECYCLE_STAGES = {"underground", "emerging", "breakout", "saturated", "dead"}
 
 
 def load_dotenv_file(dotenv_path: str = ".env") -> None:
@@ -636,6 +639,26 @@ class Database:
                 PRIMARY KEY(scope, subject)
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS trends (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                niche TEXT,
+                country_origin TEXT DEFAULT 'US',
+                source_url TEXT,
+                video_preview_url TEXT,
+                scout_comment TEXT,
+                viral_score INTEGER DEFAULT 50,
+                trend_speed TEXT DEFAULT 'medium',
+                saturation_sng INTEGER DEFAULT 10,
+                lifecycle_stage TEXT DEFAULT 'emerging',
+                created_by_admin TEXT,
+                created_at TEXT NOT NULL,
+                is_active INTEGER DEFAULT 1
+            )
+            """,
             "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
             "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON auth_sessions(user_id)",
             "CREATE INDEX IF NOT EXISTS idx_analysis_user_id_created_at ON analysis_runs(user_id, created_at DESC)",
@@ -643,6 +666,7 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_analysis_created_at ON analysis_runs(created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_admin_sessions_token_hash ON admin_sessions(token_hash)",
             "CREATE INDEX IF NOT EXISTS idx_admin_logs_run_id_created_at ON admin_analysis_logs(run_id, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_trends_lifecycle ON trends(lifecycle_stage, is_active, viral_score)",
         ]
 
         with self._lock:
@@ -2415,6 +2439,277 @@ def create_admin_analysis_log(run_id: str, message: str) -> dict[str, Any]:
     return log_payload
 
 
+def trend_to_payload(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "description": row["description"],
+        "platform": row["platform"],
+        "niche": row.get("niche") or "",
+        "countryOrigin": row.get("country_origin") or "US",
+        "sourceUrl": row.get("source_url") or "",
+        "videoPreviewUrl": row.get("video_preview_url") or "",
+        "scoutComment": row.get("scout_comment") or "",
+        "viralScore": parse_int(row.get("viral_score"), 50),
+        "trendSpeed": row.get("trend_speed") or "medium",
+        "saturationSng": parse_int(row.get("saturation_sng"), 10),
+        "lifecycleStage": row.get("lifecycle_stage") or "emerging",
+        "createdByAdmin": row.get("created_by_admin") or "",
+        "createdAt": row["created_at"],
+        "isActive": bool(row.get("is_active")),
+    }
+
+
+def get_payload_value(payload: dict[str, Any], snake_key: str, camel_key: str | None = None, default: Any = None) -> Any:
+    if snake_key in payload:
+        return payload.get(snake_key)
+    if camel_key and camel_key in payload:
+        return payload.get(camel_key)
+    return default
+
+
+def validate_required_text(value: Any, field_name: str, min_length: int = 1, max_length: int = 1000) -> str:
+    text = str(value or "").strip()
+    if len(text) < min_length or len(text) > max_length:
+        raise ApiError(f"{field_name} must be between {min_length} and {max_length} characters.", 400)
+    return text
+
+
+def validate_optional_text(value: Any, max_length: int = 1000) -> str:
+    return str(value or "").strip()[:max_length]
+
+
+def validate_choice(value: Any, allowed_values: set[str], field_name: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in allowed_values:
+        raise ApiError(f"{field_name} is invalid.", 400)
+    return normalized
+
+
+def validate_percent(value: Any, field_name: str, default: int) -> int:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        raise ApiError(f"{field_name} must be an integer from 0 to 100.", 400)
+    try:
+        parsed_value = int(value)
+    except (TypeError, ValueError):
+        raise ApiError(f"{field_name} must be an integer from 0 to 100.", 400) from None
+    if parsed_value < 0 or parsed_value > 100:
+        raise ApiError(f"{field_name} must be an integer from 0 to 100.", 400)
+    return parsed_value
+
+
+def validate_active_flag(value: Any) -> int:
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if value in (0, 1, "0", "1"):
+        return int(value)
+    raise ApiError("is_active is invalid.", 400)
+
+
+def create_admin_trend(payload: dict[str, Any], admin_session: dict[str, Any]) -> dict[str, Any]:
+    trend_id = str(uuid.uuid4())
+    created_at = iso_now()
+    title = validate_required_text(get_payload_value(payload, "title"), "title", 3, 200)
+    description = validate_required_text(get_payload_value(payload, "description"), "description", 3, 1400)
+    platform = validate_choice(get_payload_value(payload, "platform"), TREND_PLATFORMS, "platform")
+    lifecycle_stage = validate_choice(
+        get_payload_value(payload, "lifecycle_stage", "lifecycleStage", "emerging"),
+        TREND_LIFECYCLE_STAGES,
+        "lifecycle_stage",
+    )
+    trend_speed = validate_choice(
+        get_payload_value(payload, "trend_speed", "trendSpeed", "medium"),
+        TREND_SPEEDS,
+        "trend_speed",
+    )
+    viral_score = validate_percent(get_payload_value(payload, "viral_score", "viralScore", 50), "viral_score", 50)
+    saturation_sng = validate_percent(
+        get_payload_value(payload, "saturation_sng", "saturationSng", 10),
+        "saturation_sng",
+        10,
+    )
+    created_by_admin = current_app.config.get("ADMIN_USERNAME") or admin_session.get("id") or "admin"
+
+    get_database().execute(
+        """
+        INSERT INTO trends (
+            id,
+            title,
+            description,
+            platform,
+            niche,
+            country_origin,
+            source_url,
+            video_preview_url,
+            scout_comment,
+            viral_score,
+            trend_speed,
+            saturation_sng,
+            lifecycle_stage,
+            created_by_admin,
+            created_at,
+            is_active
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            trend_id,
+            title,
+            description,
+            platform,
+            validate_optional_text(get_payload_value(payload, "niche"), 240),
+            validate_optional_text(get_payload_value(payload, "country_origin", "countryOrigin", "US"), 64) or "US",
+            validate_optional_text(get_payload_value(payload, "source_url", "sourceUrl"), 1000),
+            validate_optional_text(get_payload_value(payload, "video_preview_url", "videoPreviewUrl"), 1000),
+            validate_optional_text(get_payload_value(payload, "scout_comment", "scoutComment"), 2000),
+            viral_score,
+            trend_speed,
+            saturation_sng,
+            lifecycle_stage,
+            created_by_admin,
+            created_at,
+            1,
+        ),
+    )
+
+    created_trend = get_trend_by_id(trend_id)
+    if not created_trend:
+        raise ApiError("Trend was not created.", 500)
+    return created_trend
+
+
+def build_trend_filters(include_feed_rules: bool = False) -> tuple[str, list[Any]]:
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    platform = str(flask_request.args.get("platform", "")).strip().lower()
+    if platform and platform != "all":
+        if platform not in TREND_PLATFORMS:
+            raise ApiError("platform is invalid.", 400)
+        conditions.append("platform = ?")
+        params.append(platform)
+
+    lifecycle_stage = str(flask_request.args.get("lifecycle_stage", "")).strip().lower()
+    if lifecycle_stage:
+        if lifecycle_stage not in TREND_LIFECYCLE_STAGES:
+            raise ApiError("lifecycle_stage is invalid.", 400)
+        conditions.append("lifecycle_stage = ?")
+        params.append(lifecycle_stage)
+
+    query = str(flask_request.args.get("q", "")).strip().lower()
+    if query:
+        like_query = f"%{query}%"
+        conditions.append(
+            "(LOWER(title) LIKE ? OR LOWER(COALESCE(niche, '')) LIKE ? OR LOWER(description) LIKE ?)"
+        )
+        params.extend([like_query, like_query, like_query])
+
+    if include_feed_rules:
+        conditions.append("is_active = 1")
+        conditions.append("lifecycle_stage NOT IN ('saturated', 'dead')")
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    return where_clause, params
+
+
+def get_admin_trends_payload() -> dict[str, Any]:
+    limit = min(max(parse_int(flask_request.args.get("limit"), 50), 1), 200)
+    offset = max(parse_int(flask_request.args.get("offset"), 0), 0)
+    where_clause, params = build_trend_filters()
+    db = get_database()
+    total_row = db.fetch_one(f"SELECT COUNT(*) AS total FROM trends {where_clause}", tuple(params))
+    rows = db.fetch_all(
+        f"""
+        SELECT *
+        FROM trends
+        {where_clause}
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        tuple([*params, limit, offset]),
+    )
+
+    return {
+        "items": [trend_to_payload(row) for row in rows],
+        "total": parse_int(total_row.get("total") if total_row else 0, 0),
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+def get_trend_by_id(trend_id: str) -> dict[str, Any] | None:
+    row = get_database().fetch_one("SELECT * FROM trends WHERE id = ? LIMIT 1", (trend_id,))
+    return trend_to_payload(row) if row else None
+
+
+def update_admin_trend(trend_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if not get_trend_by_id(trend_id):
+        raise ApiError("Trend not found.", 404)
+
+    updates: list[str] = []
+    params: list[Any] = []
+    allowed_updates = {
+        "lifecycle_stage": ("lifecycleStage", lambda value: validate_choice(value, TREND_LIFECYCLE_STAGES, "lifecycle_stage")),
+        "scout_comment": ("scoutComment", lambda value: validate_optional_text(value, 2000)),
+        "viral_score": ("viralScore", lambda value: validate_percent(value, "viral_score", 50)),
+        "saturation_sng": ("saturationSng", lambda value: validate_percent(value, "saturation_sng", 10)),
+        "is_active": ("isActive", validate_active_flag),
+    }
+
+    for column, (camel_key, validator) in allowed_updates.items():
+        if column not in payload and camel_key not in payload:
+            continue
+        updates.append(f"{column} = ?")
+        params.append(validator(get_payload_value(payload, column, camel_key)))
+
+    if not updates:
+        raise ApiError("No editable trend fields were provided.", 400)
+
+    get_database().execute(
+        f"UPDATE trends SET {', '.join(updates)} WHERE id = ?",
+        tuple([*params, trend_id]),
+    )
+    updated_trend = get_trend_by_id(trend_id)
+    if not updated_trend:
+        raise ApiError("Trend not found.", 404)
+    return updated_trend
+
+
+def deactivate_admin_trend(trend_id: str) -> None:
+    if not get_trend_by_id(trend_id):
+        raise ApiError("Trend not found.", 404)
+    get_database().execute("UPDATE trends SET is_active = 0 WHERE id = ?", (trend_id,))
+
+
+def get_trends_feed_payload() -> dict[str, Any]:
+    page = max(parse_int(flask_request.args.get("page"), 1), 1)
+    per_page = min(max(parse_int(flask_request.args.get("per_page"), 20), 1), 100)
+    offset = (page - 1) * per_page
+    where_clause, params = build_trend_filters(include_feed_rules=True)
+    db = get_database()
+    total_row = db.fetch_one(f"SELECT COUNT(*) AS total FROM trends {where_clause}", tuple(params))
+    rows = db.fetch_all(
+        f"""
+        SELECT *
+        FROM trends
+        {where_clause}
+        ORDER BY viral_score DESC, created_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        tuple([*params, per_page, offset]),
+    )
+    total = parse_int(total_row.get("total") if total_row else 0, 0)
+
+    return {
+        "items": [trend_to_payload(row) for row in rows],
+        "total": total,
+        "page": page,
+        "hasMore": offset + len(rows) < total,
+    }
+
+
 def emit_admin_realtime(event_name: str, payload: dict[str, Any]) -> None:
     try:
         socketio = current_app.extensions.get("socketio")
@@ -2453,7 +2748,7 @@ def register_routes(app: Flask) -> None:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Vary"] = "Origin"
         response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-CSRF-Token"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -2558,6 +2853,26 @@ def register_routes(app: Flask) -> None:
         log_payload = create_admin_analysis_log(run_id, str(payload.get("message", "")))
         return jsonify({"log": log_payload}), 201
 
+    @app.route("/admin/trends", methods=["GET", "POST", "OPTIONS"])
+    def admin_trends():
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+        admin_session = get_current_admin()
+        if flask_request.method == "POST":
+            trend_payload = create_admin_trend(request_json(), admin_session)
+            return jsonify(trend_payload), 201
+        return jsonify(get_admin_trends_payload())
+
+    @app.route("/admin/trends/<trend_id>", methods=["PATCH", "DELETE", "OPTIONS"])
+    def admin_trend_details(trend_id: str):
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+        get_current_admin(require_csrf=True)
+        if flask_request.method == "DELETE":
+            deactivate_admin_trend(trend_id)
+            return jsonify({"status": "deactivated"})
+        return jsonify(update_admin_trend(trend_id, request_json()))
+
     @app.route("/auth/register", methods=["POST", "OPTIONS"])
     def register():
         if flask_request.method == "OPTIONS":
@@ -2648,6 +2963,13 @@ def register_routes(app: Flask) -> None:
         if not analysis_run:
             raise ApiError("Analysis not found.", 404)
         return jsonify(analysis_run)
+
+    @app.route("/trends/feed", methods=["GET", "OPTIONS"])
+    def trends_feed():
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+        get_current_user()
+        return jsonify(get_trends_feed_payload())
 
     @app.route("/analyze-account", methods=["POST", "OPTIONS"])
     def analyze_account():
