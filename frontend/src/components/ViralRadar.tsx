@@ -1,6 +1,7 @@
 import {useEffect, useState} from 'react';
 import {Radio} from 'lucide-react';
 import ooppssieMaskot from '../../assets/ooppssieMaskot.png';
+import {API_BASE_URL} from '../lib/api';
 import TrendCard, {type TrendCardData, type TrendPlatform} from './TrendCard';
 
 type ApiTrendPlatform = 'tiktok' | 'instagram' | 'reels' | 'shorts' | 'youtube_shorts';
@@ -24,7 +25,6 @@ type FeedResponse = {
   items: ApiTrend[];
 };
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000').replace(/\/$/, '');
 const filters: TrendFilter[] = [
   {label: 'Все', value: 'all'},
   {label: 'TikTok', value: 'tiktok'},
@@ -56,7 +56,11 @@ function Upsee({mood}: UpseeProps) {
   );
 }
 
-export default function ViralRadar() {
+type ViralRadarProps = {
+  isAuthenticated?: boolean;
+};
+
+export default function ViralRadar({isAuthenticated = true}: ViralRadarProps) {
   const [activeFilter, setActiveFilter] = useState<TrendFilter>(filters[0]);
   const [trends, setTrends] = useState<TrendCardData[]>([]);
   const [loading, setLoading] = useState(false);
@@ -168,7 +172,7 @@ export default function ViralRadar() {
       {!loading && !errorMessage && trends.length > 0 ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {trends.map((trend) => (
-            <TrendCard key={trend.id} trend={trend} />
+            <TrendCard key={trend.id} trend={trend} isAuthenticated={isAuthenticated} />
           ))}
         </div>
       ) : null}

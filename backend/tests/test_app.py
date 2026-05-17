@@ -1,4 +1,5 @@
 from io import BytesIO
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -331,6 +332,136 @@ class BackendApiTests(unittest.TestCase):
         empty_feed_response = self.client.get("/trends/feed?platform=reels", headers=self.auth_headers(user_token))
         self.assertEqual(empty_feed_response.status_code, 200)
         self.assertEqual(empty_feed_response.get_json()["total"], 0)
+
+    @patch("app.call_gemini_generate")
+    def test_trend_remix_generates_and_stores_plan(self, call_gemini_generate_mock):
+        admin_csrf_token = self.admin_login().get_json()["admin"]["csrfToken"]
+        create_response = self.client.post(
+            "/admin/trends",
+            headers=self.admin_csrf_headers(admin_csrf_token),
+            json={
+                "title": "Founder tab confession",
+                "description": "Creators show open browser tabs to explain what they are building.",
+                "platform": "reels",
+                "niche": "startups",
+                "viral_score": 82,
+                "saturation_sng": 18,
+                "lifecycle_stage": "emerging",
+            },
+        )
+        self.assertEqual(create_response.status_code, 201)
+        trend_id = create_response.get_json()["id"]
+
+        remix_payload = {
+            "hook": "Почему ваши вкладки продают лучше лендинга",
+            "scenario": ["Откройте рабочий стол", "Покажите 3 вкладки", "Объясните выбор", "Дайте вывод"],
+            "shotList": ["Крупный план ноутбука", "Запись экрана", "Финальный talking head"],
+            "captions": ["Вкладки раскрывают стратегию", "Покажите процесс честно", "Так выглядит фокус"],
+            "hashtags": ["startup", "founder", "content", "reels", "strategy", "marketing", "creator", "business"],
+            "thumbnailText": "Покажи вкладки",
+            "shootingTips": ["Скрой личные данные", "Держи темп быстрым"],
+            "format": "Экспертный блог",
+        }
+        call_gemini_generate_mock.return_value = (
+            {"candidates": [{"content": {"parts": [{"text": json.dumps(remix_payload, ensure_ascii=False)}]}}]},
+            "gemini-test",
+        )
+
+        user_token = self.register(email="remix-user@example.com").get_json()["token"]
+        remix_response = self.client.post(
+            f"/trends/{trend_id}/remix",
+            headers=self.auth_headers(user_token),
+            json={"format": "expert_blog"},
+        )
+
+        self.assertEqual(remix_response.status_code, 201)
+        payload = remix_response.get_json()
+        self.assertEqual(payload["trendId"], trend_id)
+        self.assertEqual(payload["format"], "expert_blog")
+        self.assertEqual(payload["result"]["hook"], remix_payload["hook"])
+        self.assertEqual(payload["analysisModel"], "gemini-test")
+
+        prompt = json.loads(call_gemini_generate_mock.call_args.args[0])
+        self.assertEqual(prompt["task"], "Generate a short-form video content remix plan in Russian")
+        self.assertEqual(prompt["requestedFormat"], "expert_blog")
+        self.assertIsNone(prompt["creatorProfile"])
+
+        missing_trend_response = self.client.post(
+            "/trends/missing/remix",
+            headers=self.auth_headers(user_token),
+            json={"format": "expert_blog"},
+        )
+        self.assertEqual(missing_trend_response.status_code, 404)
+
+    @patch("app.call_gemini_generate")
+    def test_trend_remix_repairs_invalid_json_response(self, call_gemini_generate_mock):
+        admin_csrf_token = self.admin_login().get_json()["admin"]["csrfToken"]
+        create_response = self.client.post(
+            "/admin/trends",
+            headers=self.admin_csrf_headers(admin_csrf_token),
+            json={
+                "title": "Receipt breakdown",
+                "description": "Creators turn everyday receipts into a short analytical story.",
+                "platform": "tiktok",
+                "niche": "finance",
+                "viral_score": 79,
+                "saturation_sng": 18,
+                "lifecycle_stage": "underground",
+            },
+        )
+        self.assertEqual(create_response.status_code, 201)
+        trend_id = create_response.get_json()["id"]
+
+        repaired_payload = {
+            "hook": "Этот чек показывает, где утекают деньги",
+            "scenario": [
+                "Покажите обычный чек крупным планом",
+                "Выделите одну неожиданную трату",
+                "Объясните, какую привычку она раскрывает",
+                "Дайте зрителю простой вывод",
+            ],
+            "shotList": [
+                "Крупный план чека на столе",
+                "Запись экрана с подсветкой строки расходов",
+                "Финальный кадр с коротким выводом",
+            ],
+            "captions": [
+                "Один чек может рассказать больше бюджета",
+                "Проверьте, куда утекают маленькие суммы",
+                "Разбор трат без сложных таблиц",
+            ],
+            "hashtags": ["finance", "money", "budget", "creator", "tiktok", "tips", "habits", "analytics"],
+            "thumbnailText": "Проверь чек",
+            "shootingTips": ["Закройте личные данные", "Снимайте чек при ровном свете"],
+            "format": "Экспертный разбор",
+        }
+        call_gemini_generate_mock.side_effect = [
+            (
+                {"candidates": [{"content": {"parts": [{"text": "Here is a plan, but not JSON."}]}}]},
+                "gemini-test",
+            ),
+            (
+                {"candidates": [{"content": {"parts": [{"text": json.dumps(repaired_payload, ensure_ascii=False)}]}}]},
+                "gemini-test",
+            ),
+        ]
+
+        user_token = self.register(email="repair-user@example.com").get_json()["token"]
+        remix_response = self.client.post(
+            f"/trends/{trend_id}/remix",
+            headers=self.auth_headers(user_token),
+            json={"format": "expert_blog"},
+        )
+
+        self.assertEqual(remix_response.status_code, 201)
+        payload = remix_response.get_json()
+        self.assertEqual(payload["result"]["hook"], repaired_payload["hook"])
+        self.assertEqual(call_gemini_generate_mock.call_count, 2)
+        self.assertEqual(call_gemini_generate_mock.call_args_list[0].kwargs["response_mime_type"], "application/json")
+
+        repair_prompt = json.loads(call_gemini_generate_mock.call_args_list[1].args[0])
+        self.assertEqual(repair_prompt["task"], "Repair an AI remix response into strict JSON")
+        self.assertIn("not JSON", repair_prompt["rawResponse"])
 
     @patch("app.generate_analysis")
     @patch("app.fetch_apify_items")

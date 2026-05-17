@@ -109,6 +109,7 @@ STOPWORDS = {
 TREND_PLATFORMS = {"tiktok", "instagram", "reels", "shorts", "youtube_shorts"}
 TREND_SPEEDS = {"slow", "medium", "fast", "explosive"}
 TREND_LIFECYCLE_STAGES = {"underground", "emerging", "breakout", "saturated", "dead"}
+REMIX_FORMATS = {"auto", "expert_blog", "humor", "faceless", "storytelling", "educational"}
 
 
 def load_dotenv_file(dotenv_path: str = ".env") -> None:
@@ -659,6 +660,16 @@ class Database:
                 is_active INTEGER DEFAULT 1
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS remixes (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                trend_id TEXT NOT NULL,
+                format TEXT NOT NULL,
+                result_payload TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """,
             "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
             "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON auth_sessions(user_id)",
             "CREATE INDEX IF NOT EXISTS idx_analysis_user_id_created_at ON analysis_runs(user_id, created_at DESC)",
@@ -672,6 +683,82 @@ class Database:
         with self._lock:
             for statement in schema_statements:
                 self.execute(statement)
+            self.seed_preview_trends()
+
+    def seed_preview_trends(self) -> None:
+        existing = self.fetch_one("SELECT COUNT(*) AS total FROM trends")
+        if parse_int(existing.get("total") if existing else 0, 0) > 0:
+            return
+
+        created_at = iso_now()
+        preview_trends = [
+            (
+                "preview-founder-tabs",
+                "Вкладки браузера как честный разбор стратегии",
+                "Автор показывает 3-5 открытых вкладок и объясняет, что каждая говорит о текущем фокусе, ошибках и следующем шаге.",
+                "reels",
+                "стартапы, личный бренд, маркетинг",
+                "US",
+                "",
+                "",
+                "Цепляет конкретикой: зритель видит не общий совет, а реальный рабочий процесс автора.",
+                86,
+                "fast",
+                22,
+                "emerging",
+                "seed",
+                created_at,
+                1,
+            ),
+            (
+                "preview-receipt-ai",
+                "AI-разбор бытовой траты за 20 секунд",
+                "Короткий ролик превращает обычный чек, покупку или заказ в мини-кейс: что это говорит о привычках, бренде или рынке.",
+                "tiktok",
+                "финансы, lifestyle, образование",
+                "US",
+                "",
+                "",
+                "Формат легко адаптировать под разные ниши, а бытовой вход снижает порог внимания.",
+                79,
+                "medium",
+                18,
+                "underground",
+                "seed",
+                created_at,
+                1,
+            ),
+        ]
+
+        for trend in preview_trends:
+            existing_trend = self.fetch_one("SELECT id FROM trends WHERE id = ? LIMIT 1", (trend[0],))
+            if existing_trend:
+                continue
+
+            self.execute(
+                """
+                INSERT INTO trends (
+                    id,
+                    title,
+                    description,
+                    platform,
+                    niche,
+                    country_origin,
+                    source_url,
+                    video_preview_url,
+                    scout_comment,
+                    viral_score,
+                    trend_speed,
+                    saturation_sng,
+                    lifecycle_stage,
+                    created_by_admin,
+                    created_at,
+                    is_active
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                trend,
+            )
 
     def ping(self) -> None:
         self.fetch_one("SELECT 1 AS ok")
@@ -1565,20 +1652,33 @@ def model_supports_search_grounding(model: str) -> bool:
     return not normalize_gemini_model_id(model).startswith("gemma-")
 
 
-def build_gemini_payload(prompt: str, use_search_grounding: bool) -> dict[str, Any]:
+def build_gemini_payload(
+    prompt: str,
+    use_search_grounding: bool,
+    response_mime_type: str | None = None,
+) -> dict[str, Any]:
+    generation_config: dict[str, Any] = {"temperature": 0.45}
+    if response_mime_type:
+        generation_config["responseMimeType"] = response_mime_type
+
     payload: dict[str, Any] = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.45},
+        "generationConfig": generation_config,
     }
     if use_search_grounding:
         payload["tools"] = [{"google_search": {}}]
     return payload
 
 
-def request_gemini_generate(prompt: str, model: str, use_search_grounding: bool) -> dict[str, Any]:
+def request_gemini_generate(
+    prompt: str,
+    model: str,
+    use_search_grounding: bool,
+    response_mime_type: str | None = None,
+) -> dict[str, Any]:
     gemini_request = request.Request(
         build_gemini_url(model),
-        data=json.dumps(build_gemini_payload(prompt, use_search_grounding)).encode("utf-8"),
+        data=json.dumps(build_gemini_payload(prompt, use_search_grounding, response_mime_type)).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
@@ -1601,6 +1701,7 @@ def call_gemini_generate(
     model: str,
     use_search_grounding: bool,
     fallback_models: list[str] | None = None,
+    response_mime_type: str | None = None,
 ) -> tuple[dict[str, Any], str]:
     attempts = build_gemini_attempts(model, fallback_models)
     fallback_was_attempted = len(attempts) > 1
@@ -1608,9 +1709,17 @@ def call_gemini_generate(
 
     for index, attempted_model in enumerate(attempts):
         attempted_grounding = use_search_grounding and model_supports_search_grounding(attempted_model)
+        attempted_response_mime_type = (
+            response_mime_type if not normalize_gemini_model_id(attempted_model).startswith("gemma-") else None
+        )
 
         try:
-            return request_gemini_generate(prompt, attempted_model, attempted_grounding), attempted_model
+            return request_gemini_generate(
+                prompt,
+                attempted_model,
+                attempted_grounding,
+                attempted_response_mime_type,
+            ), attempted_model
         except error.HTTPError as exc:
             raw_error = exc.read().decode("utf-8", errors="replace")
             last_http_error = (exc.code, raw_error or "Gemini request failed.")
@@ -2710,6 +2819,219 @@ def get_trends_feed_payload() -> dict[str, Any]:
     }
 
 
+def get_active_trend_row(trend_id: str) -> dict[str, Any]:
+    row = get_database().fetch_one(
+        "SELECT * FROM trends WHERE id = ? AND is_active = 1 LIMIT 1",
+        (trend_id,),
+    )
+    if not row:
+        raise ApiError("Trend not found.", 404)
+    return row
+
+
+def get_latest_user_analysis(user_id: str) -> dict[str, Any] | None:
+    return get_database().fetch_one(
+        """
+        SELECT *
+        FROM analysis_runs
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (user_id,),
+    )
+
+
+def build_creator_profile(analysis_row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not analysis_row:
+        return None
+
+    account = as_dict(safe_json_loads(analysis_row.get("account_payload"), {}))
+    return {
+        "username": str(account.get("username") or "").strip(),
+        "biography": str(account.get("biography") or "").strip(),
+        "followersCount": account.get("followersCount"),
+        "platform": str(account.get("platform") or "").strip(),
+    }
+
+
+def build_remix_prompt(trend: dict[str, Any], creator_profile: dict[str, Any] | None, format_value: str) -> str:
+    prompt_payload = {
+        "task": "Generate a short-form video content remix plan in Russian",
+        "currentDate": utc_now().date().isoformat(),
+        "trend": {
+            "title": trend["title"],
+            "description": trend["description"],
+            "platform": trend["platform"],
+            "niche": trend.get("niche"),
+            "scout_comment": trend.get("scout_comment"),
+            "viral_score": trend.get("viral_score"),
+        },
+        "creatorProfile": creator_profile,
+        "requestedFormat": format_value,
+        "requirements": [
+            "Return only valid JSON, no markdown, no code fences",
+            "All text fields must be in Russian",
+            "hook: one attention-grabbing opening line, max 12 words",
+            "scenario: array of 4-5 step strings describing the content flow",
+            "shotList: array of 3-5 specific shot descriptions",
+            "captions: array of exactly 3 caption variants without emoji characters",
+            "hashtags: array of 8-10 hashtags without # symbol",
+            "thumbnailText: max 4 words for thumbnail overlay",
+            "shootingTips: array of 2-3 practical filming tips",
+            "format: the format name in Russian",
+            "Do not use emoji characters anywhere in the JSON values",
+            "Use this exact JSON shape: {hook, scenario:[string], shotList:[string], captions:[string], hashtags:[string], thumbnailText, shootingTips:[string], format}",
+        ],
+    }
+    return json.dumps(prompt_payload, ensure_ascii=False)
+
+
+def build_remix_repair_prompt(original_prompt: str, raw_response: str) -> str:
+    prompt_payload = {
+        "task": "Repair an AI remix response into strict JSON",
+        "originalRequest": original_prompt,
+        "rawResponse": raw_response[:12000],
+        "requirements": [
+            "Return only valid JSON, no markdown, no code fences, no commentary",
+            "All text fields must be in Russian",
+            "Do not use emoji characters anywhere in the JSON values",
+            "Use this exact JSON shape: {hook, scenario:[string], shotList:[string], captions:[string], hashtags:[string], thumbnailText, shootingTips:[string], format}",
+            "scenario must contain 4-5 strings",
+            "shotList must contain 3-5 strings",
+            "captions must contain exactly 3 strings",
+            "hashtags must contain 8-10 strings without # symbol",
+            "shootingTips must contain 2-3 strings",
+            "thumbnailText must be max 4 words",
+        ],
+    }
+    return json.dumps(prompt_payload, ensure_ascii=False)
+
+
+def normalize_remix_list(value: Any, field_name: str, min_items: int, max_items: int) -> list[str]:
+    if not isinstance(value, list) or not (min_items <= len(value) <= max_items):
+        raise UpstreamServiceError("AI returned an incomplete remix plan.", 502)
+    items = [str(item).strip() for item in value if str(item).strip()]
+    if len(items) < min_items:
+        raise UpstreamServiceError("AI returned an incomplete remix plan.", 502)
+    if field_name == "hashtags":
+        return [item.removeprefix("#") for item in items[:max_items]]
+    return items[:max_items]
+
+
+def normalize_remix_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    required_keys = {
+        "hook",
+        "scenario",
+        "shotList",
+        "captions",
+        "hashtags",
+        "thumbnailText",
+        "shootingTips",
+    }
+    if not required_keys.issubset(payload):
+        raise UpstreamServiceError("AI returned an incomplete remix plan.", 502)
+
+    hook = str(payload.get("hook") or "").strip()
+    thumbnail_text = str(payload.get("thumbnailText") or "").strip()
+    if not hook or not thumbnail_text:
+        raise UpstreamServiceError("AI returned an incomplete remix plan.", 502)
+
+    return {
+        "hook": hook,
+        "scenario": normalize_remix_list(payload.get("scenario"), "scenario", 4, 5),
+        "shotList": normalize_remix_list(payload.get("shotList"), "shotList", 3, 5),
+        "captions": normalize_remix_list(payload.get("captions"), "captions", 3, 3),
+        "hashtags": normalize_remix_list(payload.get("hashtags"), "hashtags", 8, 10),
+        "thumbnailText": thumbnail_text,
+        "shootingTips": normalize_remix_list(payload.get("shootingTips"), "shootingTips", 2, 3),
+        "format": str(payload.get("format") or "").strip(),
+    }
+
+
+def parse_remix_result_text(raw_text: str) -> dict[str, Any]:
+    return normalize_remix_payload(parse_json_response_text(raw_text))
+
+
+def generate_remix_result(prompt: str) -> tuple[dict[str, Any], str]:
+    response_payload, analysis_model = call_gemini_generate(
+        prompt,
+        current_app.config["GEMINI_MODEL"],
+        False,
+        current_app.config["GEMINI_FALLBACK_MODELS"],
+        response_mime_type="application/json",
+    )
+
+    raw_text = ""
+    try:
+        raw_text = extract_text_parts(response_payload)
+        return parse_remix_result_text(raw_text), analysis_model
+    except UpstreamServiceError:
+        current_app.logger.warning("Gemini returned an invalid remix JSON payload. Trying JSON repair.")
+        repair_prompt = build_remix_repair_prompt(
+            prompt,
+            raw_text or json.dumps(response_payload, ensure_ascii=False),
+        )
+        repair_payload, repair_model = call_gemini_generate(
+            repair_prompt,
+            current_app.config["GEMINI_MODEL"],
+            False,
+            current_app.config["GEMINI_FALLBACK_MODELS"],
+            response_mime_type="application/json",
+        )
+        try:
+            return parse_remix_result_text(extract_text_parts(repair_payload)), repair_model
+        except UpstreamServiceError as repair_exc:
+            raise UpstreamServiceError(
+                "AI не смог собрать план Remix. Попробуйте ещё раз.",
+                502,
+            ) from repair_exc
+
+
+def create_trend_remix(trend_id: str, user: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    format_value = str(payload.get("format") or "auto").strip().lower()
+    if format_value not in REMIX_FORMATS:
+        raise ApiError("format is invalid.", 400)
+
+    consume_rate_limit(
+        "remix-generate",
+        f"user:{user['id']}",
+        current_app.config["ANALYSIS_LIMIT_PER_HOUR"],
+        60 * 60,
+    )
+
+    trend = get_active_trend_row(trend_id)
+    creator_profile = build_creator_profile(get_latest_user_analysis(user["id"]))
+    remix_prompt = build_remix_prompt(trend, creator_profile, format_value)
+    remix_result, analysis_model = generate_remix_result(remix_prompt)
+    remix_id = str(uuid.uuid4())
+    created_at = iso_now()
+
+    get_database().execute(
+        """
+        INSERT INTO remixes (id, user_id, trend_id, format, result_payload, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            remix_id,
+            user["id"],
+            trend_id,
+            format_value,
+            json.dumps(remix_result, ensure_ascii=False),
+            created_at,
+        ),
+    )
+
+    return {
+        "id": remix_id,
+        "trendId": trend_id,
+        "format": format_value,
+        "result": remix_result,
+        "createdAt": created_at,
+        "analysisModel": analysis_model,
+    }
+
+
 def emit_admin_realtime(event_name: str, payload: dict[str, Any]) -> None:
     try:
         socketio = current_app.extensions.get("socketio")
@@ -2970,6 +3292,13 @@ def register_routes(app: Flask) -> None:
             return ("", 204)
         get_current_user()
         return jsonify(get_trends_feed_payload())
+
+    @app.route("/trends/<trend_id>/remix", methods=["POST", "OPTIONS"])
+    def trend_remix(trend_id: str):
+        if flask_request.method == "OPTIONS":
+            return ("", 204)
+        user = get_current_user()
+        return jsonify(create_trend_remix(trend_id, user, request_json())), 201
 
     @app.route("/analyze-account", methods=["POST", "OPTIONS"])
     def analyze_account():

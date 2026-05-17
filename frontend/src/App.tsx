@@ -18,6 +18,7 @@ import {
 import heroLiquid from '../assets/image.png';
 import {COOKIE_SESSION_MARKER} from './lib/auth';
 import ViralRadar from './components/ViralRadar';
+import {API_BASE_URL, ApiRequestError, fetchJson} from './lib/api';
 import {
   extractUsername,
   formatAnalysisDate,
@@ -107,7 +108,6 @@ type AnalysisHistoryItem = {
   createdAt: string;
 };
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000').replace(/\/$/, '');
 const shellContainerClass = 'mx-auto w-full max-w-[1184px] px-4 sm:px-6 lg:px-8';
 const pageClass = 'w-full pb-10 sm:pb-12';
 const cardClass =
@@ -123,49 +123,6 @@ const primaryButtonClass =
   'inline-flex h-[54px] items-center justify-center rounded-xl bg-[#ECECEC] px-6 text-[16px] font-bold text-black transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-70 sm:h-[58px] sm:px-8';
 const secondaryButtonClass =
   'inline-flex h-[48px] items-center justify-center gap-3 rounded-xl border border-white/14 bg-white/6 px-5 text-[15px] font-semibold text-gray-100 transition-colors hover:bg-white/10';
-
-class ApiRequestError extends Error {
-  status: number;
-
-  constructor(message: string, status: number) {
-    super(message);
-    this.name = 'ApiRequestError';
-    this.status = status;
-  }
-}
-
-function extractErrorMessage(payload: unknown, fallback: string) {
-  if (!payload || typeof payload !== 'object') {
-    return fallback;
-  }
-
-  const error =
-    typeof (payload as {error?: unknown}).error === 'string'
-      ? (payload as {error: string}).error
-      : fallback;
-
-  return error;
-}
-
-async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      ...options,
-      credentials: 'include',
-    });
-  } catch (error) {
-    throw new ApiRequestError(error instanceof Error ? error.message : 'Network request failed.', 0);
-  }
-
-  const payload = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    throw new ApiRequestError(extractErrorMessage(payload, 'Request failed.'), response.status);
-  }
-
-  return payload as T;
-}
 
 function LoadingAtom() {
   return (
@@ -617,7 +574,7 @@ export default function App() {
               </div>
             </section>
 
-            {user && <ViralRadar />}
+            {user && <ViralRadar isAuthenticated={Boolean(user)} />}
 
             {!user && !authLoading && (
               <section className={`${cardClass} mt-10 backdrop-blur-md sm:mt-12`}>
